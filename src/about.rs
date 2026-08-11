@@ -4,7 +4,11 @@ use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
     System::LibraryLoader::GetModuleHandleW,
-    UI::{Shell::ShellExecuteW, WindowsAndMessaging::*},
+    UI::{
+        Input::KeyboardAndMouse::VK_ESCAPE,
+        Shell::ShellExecuteW,
+        WindowsAndMessaging::*,
+    },
 };
 
 use crate::{theme::Palette, update};
