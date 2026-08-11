@@ -1,7 +1,11 @@
-unsafe fn open_picker(hwnd: HWND) {
+unsafe fn open_picker(hwnd: HWND, origin: OpenOrigin) {
     let target = GetForegroundWindow();
-    let anchor = caret_position(target);
-    let (x, y) = popup_position(anchor);
+    let (x, y) = match origin {
+        OpenOrigin::Tray => tray_popup_position(hwnd),
+        OpenOrigin::Hotkey => caret_position(target)
+            .map(popup_position)
+            .unwrap_or_else(|| tray_popup_position(hwnd)),
+    };
 
     STATE.with(|cell| {
         let mut state = cell.borrow_mut();
@@ -23,13 +27,13 @@ unsafe fn open_picker(hwnd: HWND) {
     InvalidateRect(hwnd, null(), 0);
 }
 
-unsafe fn caret_position(target: HWND) -> POINT {
+unsafe fn caret_position(target: HWND) -> Option<POINT> {
     // UI Automation TextPattern2 is the primary path because many modern apps
     // do not expose their caret through the legacy GUITHREADINFO structure.
     if let Some((x, y)) = caret::focused_caret_point() {
         let point = POINT { x, y };
         if anchor_is_usable(point, target) {
-            return point;
+            return Some(point);
         }
     }
 
@@ -39,49 +43,20 @@ unsafe fn caret_position(target: HWND) -> POINT {
         if thread_id != 0 {
             let mut info: GUITHREADINFO = zeroed();
             info.cbSize = size_of::<GUITHREADINFO>() as u32;
-            if GetGUIThreadInfo(thread_id, &mut info) != 0 {
-                if !info.hwndCaret.is_null() {
-                    let mut point = POINT { x: info.rcCaret.left, y: info.rcCaret.bottom };
-                    if ClientToScreen(info.hwndCaret, &mut point) != 0
-                        && anchor_is_usable(point, target)
-                    {
-                        return point;
-                    }
-                }
-
-                // If the application does not expose a caret, stay anchored to
-                // a valid focused control rather than accepting a zero rectangle.
-                if !info.hwndFocus.is_null() {
-                    let mut rect: RECT = zeroed();
-                    if GetWindowRect(info.hwndFocus, &mut rect) != 0 && rect_is_usable(rect) {
-                        let height = rect.bottom - rect.top;
-                        let point = POINT {
-                            x: rect.left + 14,
-                            y: rect.top + height.min(40).max(1),
-                        };
-                        if anchor_is_usable(point, target) {
-                            return point;
-                        }
-                    }
+            if GetGUIThreadInfo(thread_id, &mut info) != 0 && !info.hwndCaret.is_null() {
+                let mut point = POINT { x: info.rcCaret.left, y: info.rcCaret.bottom };
+                if ClientToScreen(info.hwndCaret, &mut point) != 0
+                    && anchor_is_usable(point, target)
+                {
+                    return Some(point);
                 }
             }
         }
-
-        let mut rect: RECT = zeroed();
-        if GetWindowRect(target, &mut rect) != 0 && rect_is_usable(rect) {
-            return POINT {
-                x: rect.left + 24,
-                y: rect.top + 48.min((rect.bottom - rect.top).max(1)),
-            };
-        }
     }
 
-    // Last-resort fallback: use a stable screen location, never (0, 0) and
-    // never the mouse pointer. In normal text controls the paths above win.
-    POINT {
-        x: (GetSystemMetrics(SM_CXSCREEN) / 2).max(32),
-        y: (GetSystemMetrics(SM_CYSCREEN) / 3).max(32),
-    }
+    // Do not guess from the active window or mouse. If a real caret cannot be
+    // resolved, the caller deliberately falls back to the system-tray icon.
+    None
 }
 
 unsafe fn anchor_is_usable(point: POINT, target: HWND) -> bool {
@@ -132,6 +107,76 @@ unsafe fn popup_position(anchor: POINT) -> (i32, i32) {
     if y + POPUP_H > work.bottom { y = anchor.y - POPUP_H - 10; }
     if y < work.top { y = work.top; }
     (x, y)
+}
+
+unsafe fn tray_popup_position(hwnd: HWND) -> (i32, i32) {
+    const GAP: i32 = 8;
+
+    if let Some(icon) = tray_icon_rect(hwnd) {
+        let center = POINT {
+            x: icon.left + (icon.right - icon.left) / 2,
+            y: icon.top + (icon.bottom - icon.top) / 2,
+        };
+        let monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
+        if !monitor.is_null() {
+            let mut info: MONITORINFO = zeroed();
+            info.cbSize = size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) != 0 {
+                let monitor_rect = info.rcMonitor;
+                let work = info.rcWork;
+                let (mut x, mut y) = if work.bottom < monitor_rect.bottom {
+                    // Standard bottom taskbar: open directly above the tray icon.
+                    (center.x - POPUP_W / 2, icon.top - POPUP_H - GAP)
+                } else if work.top > monitor_rect.top {
+                    // Top taskbar.
+                    (center.x - POPUP_W / 2, icon.bottom + GAP)
+                } else if work.right < monitor_rect.right {
+                    // Right taskbar.
+                    (icon.left - POPUP_W - GAP, center.y - POPUP_H / 2)
+                } else if work.left > monitor_rect.left {
+                    // Left taskbar.
+                    (icon.right + GAP, center.y - POPUP_H / 2)
+                } else {
+                    // Auto-hidden/overlay taskbar: Windows normally keeps the tray
+                    // along the bottom edge, so prefer the same visual placement.
+                    (center.x - POPUP_W / 2, icon.top - POPUP_H - GAP)
+                };
+
+                clamp_popup_to_work_area(&mut x, &mut y, work);
+                return (x, y);
+            }
+        }
+    }
+
+    // Extremely defensive fallback for Explorer restarts or a temporarily
+    // unavailable tray rect. Keep the picker by the taskbar side of the primary
+    // work area instead of placing it at a screen corner chosen from a caret guess.
+    let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+    let mut work = RECT {
+        left: 0,
+        top: 0,
+        right: GetSystemMetrics(SM_CXSCREEN),
+        bottom: GetSystemMetrics(SM_CYSCREEN),
+    };
+    if !monitor.is_null() {
+        let mut info: MONITORINFO = zeroed();
+        info.cbSize = size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) != 0 {
+            work = info.rcWork;
+        }
+    }
+
+    (
+        (work.right - POPUP_W - 12).max(work.left),
+        (work.bottom - POPUP_H - 12).max(work.top),
+    )
+}
+
+fn clamp_popup_to_work_area(x: &mut i32, y: &mut i32, work: RECT) {
+    let max_x = (work.right - POPUP_W).max(work.left);
+    let max_y = (work.bottom - POPUP_H).max(work.top);
+    *x = (*x).clamp(work.left, max_x);
+    *y = (*y).clamp(work.top, max_y);
 }
 
 unsafe fn handle_keydown(hwnd: HWND, wparam: WPARAM) -> bool {

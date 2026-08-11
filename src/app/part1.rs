@@ -87,6 +87,12 @@ enum CatalogRef {
     Custom(usize),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenOrigin {
+    Hotkey,
+    Tray,
+}
+
 thread_local! {
     static STATE: RefCell<AppState> = RefCell::new(AppState::default());
 }
@@ -220,12 +226,16 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_HOTKEY if wparam == HOTKEY_ID as usize => {
-            if IsWindowVisible(hwnd) != 0 { ShowWindow(hwnd, SW_HIDE); } else { open_picker(hwnd); }
+            if IsWindowVisible(hwnd) != 0 {
+                ShowWindow(hwnd, SW_HIDE);
+            } else {
+                open_picker(hwnd, OpenOrigin::Hotkey);
+            }
             return 0;
         }
         WM_TRAY => {
             match lparam as u32 {
-                WM_LBUTTONUP | WM_LBUTTONDBLCLK => open_picker(hwnd),
+                WM_LBUTTONUP | WM_LBUTTONDBLCLK => open_picker(hwnd, OpenOrigin::Tray),
                 WM_RBUTTONUP | WM_CONTEXTMENU => show_tray_menu(hwnd),
                 _ => {}
             }
@@ -233,7 +243,7 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_COMMAND => {
             match wparam & 0xffff {
-                CMD_OPEN => open_picker(hwnd),
+                CMD_OPEN => open_picker(hwnd, OpenOrigin::Tray),
                 CMD_MANAGE => manager::show(hwnd, WM_CUSTOM_CHANGED),
                 CMD_ABOUT => about::show(hwnd, WM_REQUEST_UPDATE),
                 CMD_UPDATE => request_manual_update(hwnd),
@@ -296,6 +306,18 @@ unsafe extern "system" fn wnd_proc(
         WM_CHAR => {
             if handle_char(hwnd, wparam) { return 0; }
         }
+        WM_NCHITTEST => {
+            let (screen_x, screen_y) = point_from_lparam(lparam);
+            let mut point = POINT { x: screen_x, y: screen_y };
+            if ScreenToClient(hwnd, &mut point) != 0 {
+                if is_draggable_background(point.x, point.y) {
+                    return HTCAPTION as LRESULT;
+                }
+                if (0..POPUP_W).contains(&point.x) && (0..POPUP_H).contains(&point.y) {
+                    return HTCLIENT as LRESULT;
+                }
+            }
+        }
         WM_MOUSEMOVE => {
             let (x, y) = point_from_lparam(lparam);
             let changed = STATE.with(|cell| {
@@ -350,6 +372,39 @@ unsafe extern "system" fn wnd_proc(
     }
 
     DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+fn is_draggable_background(x: i32, y: i32) -> bool {
+    if !(0..POPUP_W).contains(&x) || !(0..POPUP_H).contains(&y) {
+        return false;
+    }
+
+    if (SEARCH_Y..SEARCH_Y + SEARCH_H).contains(&y)
+        && (PAD..POPUP_W - PAD).contains(&x)
+    {
+        return false;
+    }
+
+    if (TABS_Y..TABS_Y + TABS_H).contains(&y)
+        && (PAD..POPUP_W - PAD).contains(&x)
+    {
+        return false;
+    }
+
+    if STATE.with(|cell| hit_test_item(x, y, &cell.borrow()).is_some()) {
+        return false;
+    }
+
+    if (ACTION_Y..ACTION_Y + ACTION_H).contains(&y)
+        && ((PAD..104).contains(&x)
+            || (112..190).contains(&x)
+            || (198..302).contains(&x)
+            || (310..POPUP_W - PAD).contains(&x))
+    {
+        return false;
+    }
+
+    true
 }
 
 unsafe fn request_manual_update(hwnd: HWND) {

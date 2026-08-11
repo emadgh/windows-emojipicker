@@ -60,6 +60,21 @@ unsafe fn add_tray_icon(hwnd: HWND) -> bool {
     Shell_NotifyIconW(NIM_ADD, &data) != 0
 }
 
+unsafe fn tray_icon_rect(hwnd: HWND) -> Option<RECT> {
+    let mut identifier: NOTIFYICONIDENTIFIER = zeroed();
+    identifier.cbSize = size_of::<NOTIFYICONIDENTIFIER>() as u32;
+    identifier.hWnd = hwnd;
+    identifier.uID = TRAY_ICON_ID;
+
+    let mut rect: RECT = zeroed();
+    let result = Shell_NotifyIconGetRect(&identifier, &mut rect);
+    if result >= 0 && rect.right > rect.left && rect.bottom > rect.top {
+        Some(rect)
+    } else {
+        None
+    }
+}
+
 unsafe fn remove_tray_icon(hwnd: HWND) {
     let mut data: NOTIFYICONDATAW = zeroed();
     data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
