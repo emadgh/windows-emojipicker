@@ -1,4 +1,7 @@
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ItemKind {
     Emoji,
     Kaomoji,
@@ -8,13 +11,12 @@ pub enum ItemKind {
 }
 
 impl ItemKind {
-    pub const ALL: [Option<Self>; 6] = [
-        None,
-        Some(Self::Emoji),
-        Some(Self::Kaomoji),
-        Some(Self::Ascii),
-        Some(Self::Snippet),
-        Some(Self::Symbol),
+    pub const ALL: [Self; 5] = [
+        Self::Emoji,
+        Self::Kaomoji,
+        Self::Ascii,
+        Self::Snippet,
+        Self::Symbol,
     ];
 
     pub fn label(self) -> &'static str {
@@ -25,6 +27,10 @@ impl ItemKind {
             Self::Snippet => "Text",
             Self::Symbol => "Symbols",
         }
+    }
+
+    pub fn customizable(self) -> bool {
+        matches!(self, Self::Kaomoji | Self::Ascii | Self::Snippet)
     }
 }
 
