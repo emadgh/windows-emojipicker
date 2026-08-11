@@ -1,0 +1,22 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select stable Rust
+        shell: pwsh
+        run: rustup default stable
+
+      - name: Cargo check
+        run: cargo check
+
+      - name: Release build
+        run: cargo build --release

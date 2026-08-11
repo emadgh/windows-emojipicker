@@ -1,0 +1,25 @@
+[package]
+name = "windows-emojipicker"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.71"
+description = "A lightweight native emoji, kaomoji, ASCII art and text snippet picker for Windows."
+license = "MIT"
+repository = "https://github.com/emadgh/windows-emojipicker"
+
+[dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+strip = "symbols"
