@@ -66,11 +66,13 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     let menu = CreatePopupMenu();
     if menu.is_null() { return; }
 
+    let current_settings = settings::get();
     let open = wide("Open picker\tWin+Shift+.");
     let manage = wide("Manage custom items");
     let about_text = wide("About");
     let update_text = wide("Check for updates");
-    let theme_text = wide(match settings::get().theme {
+    let auto_update_text = wide("Automatic updates");
+    let theme_text = wide(match current_settings.theme {
         settings::Theme::Dark => "Light theme",
         settings::Theme::Light => "Dark theme",
     });
@@ -79,6 +81,12 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     AppendMenuW(menu, MF_STRING, CMD_MANAGE, manage.as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, CMD_UPDATE, update_text.as_ptr());
+    AppendMenuW(
+        menu,
+        MF_STRING | if current_settings.auto_update { MF_CHECKED } else { MF_UNCHECKED },
+        CMD_AUTO_UPDATE,
+        auto_update_text.as_ptr(),
+    );
     AppendMenuW(menu, MF_STRING, CMD_THEME, theme_text.as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_ABOUT, about_text.as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
