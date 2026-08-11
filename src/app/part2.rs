@@ -27,7 +27,10 @@ unsafe fn caret_position(target: HWND) -> POINT {
     // UI Automation TextPattern2 is the primary path because many modern apps
     // do not expose their caret through the legacy GUITHREADINFO structure.
     if let Some((x, y)) = caret::focused_caret_point() {
-        return POINT { x, y };
+        let point = POINT { x, y };
+        if anchor_is_usable(point, target) {
+            return point;
+        }
     }
 
     // Native/legacy edit controls generally expose an exact system caret.
@@ -39,29 +42,77 @@ unsafe fn caret_position(target: HWND) -> POINT {
             if GetGUIThreadInfo(thread_id, &mut info) != 0 {
                 if !info.hwndCaret.is_null() {
                     let mut point = POINT { x: info.rcCaret.left, y: info.rcCaret.bottom };
-                    if ClientToScreen(info.hwndCaret, &mut point) != 0 {
+                    if ClientToScreen(info.hwndCaret, &mut point) != 0
+                        && anchor_is_usable(point, target)
+                    {
                         return point;
                     }
                 }
 
                 // If the application does not expose a caret, stay anchored to
-                // the focused control rather than jumping to the mouse pointer.
+                // a valid focused control rather than accepting a zero rectangle.
                 if !info.hwndFocus.is_null() {
                     let mut rect: RECT = zeroed();
-                    if GetWindowRect(info.hwndFocus, &mut rect) != 0 {
-                        return POINT { x: rect.left + 14, y: rect.bottom.min(rect.top + 40) };
+                    if GetWindowRect(info.hwndFocus, &mut rect) != 0 && rect_is_usable(rect) {
+                        let height = rect.bottom - rect.top;
+                        let point = POINT {
+                            x: rect.left + 14,
+                            y: rect.top + height.min(40).max(1),
+                        };
+                        if anchor_is_usable(point, target) {
+                            return point;
+                        }
                     }
                 }
             }
         }
 
         let mut rect: RECT = zeroed();
-        if GetWindowRect(target, &mut rect) != 0 {
-            return POINT { x: rect.left + 24, y: rect.top + 48 };
+        if GetWindowRect(target, &mut rect) != 0 && rect_is_usable(rect) {
+            return POINT {
+                x: rect.left + 24,
+                y: rect.top + 48.min((rect.bottom - rect.top).max(1)),
+            };
         }
     }
 
-    POINT { x: 32, y: 32 }
+    // Last-resort fallback: use a stable screen location, never (0, 0) and
+    // never the mouse pointer. In normal text controls the paths above win.
+    POINT {
+        x: (GetSystemMetrics(SM_CXSCREEN) / 2).max(32),
+        y: (GetSystemMetrics(SM_CYSCREEN) / 3).max(32),
+    }
+}
+
+unsafe fn anchor_is_usable(point: POINT, target: HWND) -> bool {
+    if point.x == 0 && point.y == 0 {
+        return false;
+    }
+
+    if MonitorFromPoint(point, MONITOR_DEFAULTTONULL).is_null() {
+        return false;
+    }
+
+    if target.is_null() {
+        return true;
+    }
+
+    let mut rect: RECT = zeroed();
+    if GetWindowRect(target, &mut rect) == 0 || !rect_is_usable(rect) {
+        return true;
+    }
+
+    // UIA can occasionally return a stale caret from a previously focused app.
+    // Requiring the anchor to be near the active top-level window prevents that.
+    const MARGIN: i32 = 96;
+    point.x >= rect.left.saturating_sub(MARGIN)
+        && point.x <= rect.right.saturating_add(MARGIN)
+        && point.y >= rect.top.saturating_sub(MARGIN)
+        && point.y <= rect.bottom.saturating_add(MARGIN)
+}
+
+fn rect_is_usable(rect: RECT) -> bool {
+    rect.right > rect.left && rect.bottom > rect.top
 }
 
 unsafe fn popup_position(anchor: POINT) -> (i32, i32) {
