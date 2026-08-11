@@ -2,7 +2,11 @@ name: Windows build
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -28,3 +32,31 @@ jobs:
           path: target/release/windows-emojipicker.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish GitHub release for updater
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $metadata = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+          $package = $metadata.packages | Where-Object { $_.name -eq 'windows-emojipicker' } | Select-Object -First 1
+          if (-not $package) { throw 'Could not resolve package version' }
+          $tag = "v$($package.version)"
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f $tag $env:GITHUB_SHA
+          git push origin "refs/tags/$tag" --force
+
+          gh release create $tag `
+            "target/release/windows-emojipicker.exe" `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "Windows Emoji Picker $tag" `
+            --notes "Native Windows x64 release. Includes the self-update asset used by the application." `
+            --latest
