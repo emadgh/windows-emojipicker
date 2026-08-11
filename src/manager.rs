@@ -8,13 +8,16 @@ use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
     System::LibraryLoader::GetModuleHandleW,
-    UI::WindowsAndMessaging::*,
+    UI::{
+        Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE},
+        WindowsAndMessaging::*,
+    },
 };
 
 use crate::{
     custom::{self, CustomItem},
     model::ItemKind,
-    theme::{rgb, Palette},
+    theme::Palette,
 };
 
 const CLASS_NAME: &str = "WindowsEmojiPicker.CustomManager";
@@ -98,17 +101,17 @@ pub unsafe fn show(owner: HWND, changed_message: u32) {
     let empty = wide("");
     let title_edit = CreateWindowExW(
         WS_EX_CLIENTEDGE, edit_class.as_ptr(), empty.as_ptr(),
-        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL as u32,
         226, 118, 378, 30, hwnd, 2001usize as HMENU, instance, null(),
     );
     let content_edit = CreateWindowExW(
         WS_EX_CLIENTEDGE, edit_class.as_ptr(), empty.as_ptr(),
-        WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL,
+        WS_CHILD | WS_VISIBLE | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_WANTRETURN as u32 | WS_VSCROLL,
         226, 184, 378, 116, hwnd, 2002usize as HMENU, instance, null(),
     );
     let keywords_edit = CreateWindowExW(
         WS_EX_CLIENTEDGE, edit_class.as_ptr(), empty.as_ptr(),
-        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL as u32,
         226, 334, 378, 30, hwnd, 2003usize as HMENU, instance, null(),
     );
     for control in [title_edit, content_edit, keywords_edit] {
@@ -161,15 +164,17 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
         WM_MOUSEWHEEL => {
             let delta = ((wparam >> 16) & 0xffff) as u16 as i16;
-            STATE.with(|cell| {
+            let changed = STATE.with(|cell| {
                 let mut state = cell.borrow_mut();
+                let old = state.list_scroll;
                 let count = custom::snapshot().len();
                 let visible = (LIST_H / LIST_ROW_H) as usize;
                 let max_scroll = count.saturating_sub(visible);
                 if delta < 0 { state.list_scroll = (state.list_scroll + 1).min(max_scroll); }
                 else { state.list_scroll = state.list_scroll.saturating_sub(1); }
+                old != state.list_scroll
             });
-            InvalidateRect(hwnd, null(), 0);
+            if changed { InvalidateRect(hwnd, null(), 0); }
             return 0;
         }
         WM_LBUTTONUP => {
