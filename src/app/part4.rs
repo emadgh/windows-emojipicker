@@ -8,7 +8,7 @@ struct GridLayout {
 }
 
 fn grid_layout(state: &AppState) -> GridLayout {
-    let emoji_dense = ItemKind::ALL[state.category_index] == Some(ItemKind::Emoji);
+    let emoji_dense = ItemKind::ALL[state.category_index] == ItemKind::Emoji;
     if emoji_dense {
         GridLayout {
             cols: EMOJI_COLS,
@@ -29,7 +29,7 @@ fn grid_layout(state: &AppState) -> GridLayout {
 }
 
 fn hit_test_item(x: i32, y: i32, state: &AppState) -> Option<usize> {
-    if y < CONTENT_TOP || y >= FOOTER_Y - 8 {
+    if y < CONTENT_TOP || y >= ACTION_Y - 8 {
         return None;
     }
 
@@ -58,30 +58,49 @@ fn hit_test_item(x: i32, y: i32, state: &AppState) -> Option<usize> {
 }
 
 fn rebuild_filter(state: &mut AppState) {
-    let query = String::from_utf16_lossy(&state.query_utf16)
-        .trim()
-        .to_lowercase();
+    let query = normalize_search(&String::from_utf16_lossy(&state.query_utf16));
     let category = ItemKind::ALL[state.category_index];
 
     state.filtered.clear();
-    state.filtered.extend(
-        items()
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| match category {
-                Some(kind) => item.kind == kind,
-                None => true,
-            })
-            .filter(|(_, item)| {
-                if query.is_empty() {
-                    return true;
-                }
-                item.title.to_lowercase().contains(&query)
-                    || item.content.to_lowercase().contains(&query)
-                    || item.keywords.to_lowercase().contains(&query)
-            })
-            .map(|(index, _)| index),
-    );
+    for (index, item) in items().iter().enumerate() {
+        if item.kind != category || !matches_query(item.title, item.content, item.keywords, &query) {
+            continue;
+        }
+        state.filtered.push(CatalogRef::Builtin(index));
+    }
+
+    custom::with_items(|custom_items| {
+        for (index, item) in custom_items.iter().enumerate() {
+            if item.kind != category || !matches_query(&item.title, &item.content, &item.keywords, &query) {
+                continue;
+            }
+            state.filtered.push(CatalogRef::Custom(index));
+        }
+    });
+}
+
+fn matches_query(title: &str, content: &str, keywords: &str, query: &str) -> bool {
+    if query.is_empty() { return true; }
+    normalize_search(title).contains(query)
+        || normalize_search(content).contains(query)
+        || normalize_search(keywords).contains(query)
+}
+
+fn normalize_search(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|ch| match ch {
+            'ي' | 'ى' => 'ی',
+            'ك' => 'ک',
+            '\u{200c}' | '\u{200d}' => ' ',
+            other => other,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn ensure_selected_visible(state: &mut AppState, count: usize) {
@@ -92,7 +111,7 @@ fn ensure_selected_visible(state: &mut AppState, count: usize) {
     } else if state.selected >= state.scroll + visible {
         let selected_row = state.selected / layout.cols;
         state.scroll = selected_row
-            .saturating_sub( layout.rows - 1)
+            .saturating_sub(layout.rows - 1)
             .saturating_mul(layout.cols);
     }
     state.scroll = state.scroll.min(max_scroll(count, layout));
@@ -106,4 +125,3 @@ fn max_scroll(count: usize, layout: GridLayout) -> usize {
 fn card_width(layout: GridLayout) -> i32 {
     (POPUP_W - PAD * 2 - layout.gap * (layout.cols as i32 - 1)) / layout.cols as i32
 }
-
