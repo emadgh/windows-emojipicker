@@ -1,10 +1,6 @@
 fn preview_text(item: PickerItem) -> String {
     if matches!(item.kind, ItemKind::Ascii) {
-        item.content
-            .lines()
-            .next()
-            .unwrap_or(item.content)
-            .to_string()
+        item.content.lines().next().unwrap_or(item.content).to_string()
     } else {
         item.content.replace('\r', "").replace('\n', " ↵ ")
     }
@@ -18,6 +14,17 @@ unsafe fn fill(hdc: HDC, rect: &RECT, color: COLORREF) {
     }
 }
 
+unsafe fn round_fill(hdc: HDC, rect: RECT, color: COLORREF, radius: i32) {
+    let brush = CreateSolidBrush(color);
+    if brush.is_null() { return; }
+    let old_brush = SelectObject(hdc, brush as _);
+    let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN) as _);
+    RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(hdc, old_pen);
+    SelectObject(hdc, old_brush);
+    DeleteObject(brush as _);
+}
+
 unsafe fn draw_text(
     hdc: HDC,
     font: HFONT,
@@ -26,22 +33,13 @@ unsafe fn draw_text(
     format: u32,
     color: COLORREF,
 ) {
-    if font.is_null() {
-        return;
-    }
+    if font.is_null() { return; }
     let old = SelectObject(hdc, font as _);
+    SetBkMode(hdc, TRANSPARENT as i32);
     SetTextColor(hdc, color);
     let mut buffer: Vec<u16> = text.encode_utf16().collect();
-    DrawTextW(
-        hdc,
-        buffer.as_mut_ptr(),
-        buffer.len() as i32,
-        rect,
-        format,
-    );
-    if !old.is_null() {
-        SelectObject(hdc, old);
-    }
+    DrawTextW(hdc, buffer.as_mut_ptr(), buffer.len() as i32, rect, format);
+    if !old.is_null() { SelectObject(hdc, old); }
 }
 
 unsafe fn add_tray_icon(hwnd: HWND) -> bool {
@@ -53,7 +51,6 @@ unsafe fn add_tray_icon(hwnd: HWND) -> bool {
     data.uCallbackMessage = WM_TRAY;
     data.hIcon = LoadIconW(null_mut(), IDI_APPLICATION);
     copy_wide_fixed("Windows Emoji Picker", &mut data.szTip);
-
     Shell_NotifyIconW(NIM_ADD, &data) != 0
 }
 
@@ -67,38 +64,36 @@ unsafe fn remove_tray_icon(hwnd: HWND) {
 
 unsafe fn show_tray_menu(hwnd: HWND) {
     let menu = CreatePopupMenu();
-    if menu.is_null() {
-        return;
-    }
+    if menu.is_null() { return; }
 
     let open = wide("Open picker\tWin+Shift+.");
+    let manage = wide("Manage custom items");
+    let about_text = wide("About");
+    let update_text = wide("Check for updates");
+    let theme_text = wide(match settings::get().theme {
+        settings::Theme::Dark => "Light theme",
+        settings::Theme::Light => "Dark theme",
+    });
     let exit = wide("Exit");
     AppendMenuW(menu, MF_STRING, CMD_OPEN, open.as_ptr());
+    AppendMenuW(menu, MF_STRING, CMD_MANAGE, manage.as_ptr());
+    AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    AppendMenuW(menu, MF_STRING, CMD_UPDATE, update_text.as_ptr());
+    AppendMenuW(menu, MF_STRING, CMD_THEME, theme_text.as_ptr());
+    AppendMenuW(menu, MF_STRING, CMD_ABOUT, about_text.as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, CMD_EXIT, exit.as_ptr());
 
     let mut point: POINT = zeroed();
     GetCursorPos(&mut point);
     SetForegroundWindow(hwnd);
-    TrackPopupMenu(
-        menu,
-        TPM_RIGHTBUTTON,
-        point.x,
-        point.y,
-        0,
-        hwnd,
-        null(),
-    );
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, null());
     DestroyMenu(menu);
 }
 
 fn copy_wide_fixed<const N: usize>(text: &str, output: &mut [u16; N]) {
     output.fill(0);
-    for (dst, src) in output
-        .iter_mut()
-        .take(N.saturating_sub(1))
-        .zip(text.encode_utf16())
-    {
+    for (dst, src) in output.iter_mut().take(N.saturating_sub(1)).zip(text.encode_utf16()) {
         *dst = src;
     }
 }
