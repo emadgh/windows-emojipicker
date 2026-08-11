@@ -1,11 +1,3 @@
-fn preview_text(item: PickerItem) -> String {
-    if matches!(item.kind, ItemKind::Ascii) {
-        item.content.lines().next().unwrap_or(item.content).to_string()
-    } else {
-        item.content.replace('\r', "").replace('\n', " ↵ ")
-    }
-}
-
 unsafe fn fill(hdc: HDC, rect: &RECT, color: COLORREF) {
     let brush = CreateSolidBrush(color);
     if !brush.is_null() {
@@ -42,6 +34,20 @@ unsafe fn draw_text(
     if !old.is_null() { SelectObject(hdc, old); }
 }
 
+unsafe fn load_app_icon() -> HICON {
+    let instance = GetModuleHandleW(null());
+    let icon = if !instance.is_null() {
+        LoadIconW(instance, APP_ICON_ID as *const u16)
+    } else {
+        null_mut()
+    };
+    if icon.is_null() {
+        LoadIconW(null_mut(), IDI_APPLICATION)
+    } else {
+        icon
+    }
+}
+
 unsafe fn add_tray_icon(hwnd: HWND) -> bool {
     let mut data: NOTIFYICONDATAW = zeroed();
     data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
@@ -49,7 +55,7 @@ unsafe fn add_tray_icon(hwnd: HWND) -> bool {
     data.uID = TRAY_ICON_ID;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = WM_TRAY;
-    data.hIcon = LoadIconW(null_mut(), IDI_APPLICATION);
+    data.hIcon = load_app_icon();
     copy_wide_fixed("Windows Emoji Picker", &mut data.szTip);
     Shell_NotifyIconW(NIM_ADD, &data) != 0
 }

@@ -10,7 +10,11 @@ use std::{
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
-    System::LibraryLoader::*,
+    System::{
+        DataExchange::*,
+        LibraryLoader::*,
+        Memory::*,
+    },
     UI::{
         Input::KeyboardAndMouse::*,
         Shell::*,
@@ -20,6 +24,7 @@ use windows_sys::Win32::{
 
 use crate::{
     about,
+    caret,
     custom,
     data::items,
     manager,
@@ -32,6 +37,7 @@ use crate::{
 
 const APP_NAME: &str = "Windows Emoji Picker";
 const WINDOW_CLASS: &str = "WindowsEmojiPicker.NativeWindow";
+const APP_ICON_ID: usize = 1;
 
 const HOTKEY_ID: i32 = 1;
 const TRAY_ICON_ID: u32 = 1;
@@ -49,6 +55,7 @@ const CMD_AUTO_UPDATE: usize = 1006;
 const CMD_EXIT: usize = 1007;
 const UPDATE_CHECK_TIMER_ID: usize = 1;
 const UPDATE_CHECK_INTERVAL_MS: u32 = 6 * 60 * 60 * 1000;
+const CF_UNICODETEXT_FORMAT: u32 = 13;
 
 const POPUP_W: i32 = 430;
 const POPUP_H: i32 = 478;
@@ -66,12 +73,13 @@ const STANDARD_COLS: usize = 2;
 const STANDARD_ROWS: usize = 4;
 const STANDARD_GAP: i32 = 8;
 const STANDARD_CARD_H: i32 = 64;
-const EMOJI_COLS: usize = 8;
-const EMOJI_ROWS: usize = 6;
-const EMOJI_GAP: i32 = 5;
-const EMOJI_CARD_H: i32 = 44;
+const DENSE_COLS: usize = 8;
+const DENSE_ROWS: usize = 6;
+const DENSE_GAP: i32 = 5;
+const DENSE_CARD_H: i32 = 44;
 
 static MANUAL_UPDATE_REQUEST: AtomicBool = AtomicBool::new(false);
+static SUPPRESS_DEACTIVATE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug)]
 enum CatalogRef {
@@ -121,7 +129,7 @@ pub fn run() -> Result<(), String> {
 
         let class_name = wide(WINDOW_CLASS);
         let window_title = wide(APP_NAME);
-        let icon = LoadIconW(null_mut(), IDI_APPLICATION);
+        let icon = load_app_icon();
         let cursor = LoadCursorW(null_mut(), IDC_ARROW);
 
         let mut wc: WNDCLASSW = zeroed();
@@ -170,7 +178,7 @@ pub fn run() -> Result<(), String> {
         {
             DestroyWindow(hwnd);
             return Err(
-                "Could not register Win+Shift+. . Another application may already own this hotkey."
+                "Could not register Win+Shift+.. Another application may already own this hotkey."
                     .into(),
             );
         }
@@ -233,6 +241,14 @@ unsafe extern "system" fn wnd_proc(
                 CMD_AUTO_UPDATE => toggle_auto_update(hwnd),
                 CMD_EXIT => { DestroyWindow(hwnd); }
                 _ => {}
+            }
+            return 0;
+        }
+        WM_ACTIVATE => {
+            if (wparam & 0xffff) as u32 == WA_INACTIVE
+                && !SUPPRESS_DEACTIVATE.load(Ordering::SeqCst)
+            {
+                ShowWindow(hwnd, SW_HIDE);
             }
             return 0;
         }

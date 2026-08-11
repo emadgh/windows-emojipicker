@@ -60,7 +60,7 @@ pub unsafe fn show(owner: HWND, request_update_message: u32) {
     GetWindowRect(owner, &mut owner_rect);
     let x = owner_rect.left + ((owner_rect.right - owner_rect.left) - W) / 2;
     let y = owner_rect.top + ((owner_rect.bottom - owner_rect.top) - H) / 2;
-    let title = wide("درباره Emoji Picker");
+    let title = wide("About Windows Emoji Picker");
     let hwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW,
         class_name.as_ptr(), title.as_ptr(),
@@ -150,23 +150,23 @@ unsafe fn paint(hwnd: HWND) {
         let state = cell.borrow();
         (state.title_font, state.font, state.small_font)
     });
-    draw_text(mem, title_font, "Emoji Picker،", RECT { left: 50, top: 14, right: 330, bottom: 52 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
-    draw_text(mem, font, "عماد قاسمی - emadghasemi.ir", RECT { left: 34, top: 58, right: 346, bottom: 94 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
+    draw_text(mem, title_font, "Windows Emoji Picker", RECT { left: 36, top: 14, right: 344, bottom: 52 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_text(mem, font, "Emad Ghasemi - emadghasemi.ir", RECT { left: 34, top: 58, right: 346, bottom: 94 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     draw_text(mem, small_font, "github.com/emadgh/windows-emojipicker", RECT { left: 34, top: 96, right: 346, bottom: 132 }, palette.event, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    draw_text(mem, small_font, &format!("نسخه {}", env!("CARGO_PKG_VERSION")), RECT { left: 34, top: 136, right: 346, bottom: 172 }, palette.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
+    draw_text(mem, small_font, &format!("Version {}", env!("CARGO_PKG_VERSION")), RECT { left: 34, top: 136, right: 346, bottom: 172 }, palette.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     let update_text = match update::status() {
-        update::UpdateStatus::Checking => "در حال بررسی…",
-        update::UpdateStatus::Downloading => "در حال بروزرسانی…",
-        update::UpdateStatus::UpToDate => "برنامه بروز است",
-        update::UpdateStatus::Available(_) => "دریافت نسخه جدید",
-        update::UpdateStatus::Failed(_) => "تلاش دوباره برای بروزرسانی",
-        _ => "بررسی بروزرسانی",
+        update::UpdateStatus::Checking => "Checking...",
+        update::UpdateStatus::Downloading => "Updating...",
+        update::UpdateStatus::UpToDate => "Up to date",
+        update::UpdateStatus::Available(_) => "Download update",
+        update::UpdateStatus::Failed(_) => "Retry update",
+        _ => "Check for updates",
     };
     round_fill(mem, RECT { left: 70, top: 184, right: 310, bottom: 224 }, palette.surface_alt, 12);
-    draw_text(mem, small_font, update_text, RECT { left: 70, top: 184, right: 310, bottom: 224 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
+    draw_text(mem, small_font, update_text, RECT { left: 70, top: 184, right: 310, bottom: 224 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     round_fill(mem, RECT { left: 140, top: 244, right: 240, bottom: 278 }, palette.surface_alt, 10);
-    draw_text(mem, small_font, "بستن", RECT { left: 140, top: 244, right: 240, bottom: 278 }, palette.text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
+    draw_text(mem, small_font, "Close", RECT { left: 140, top: 244, right: 240, bottom: 278 }, palette.text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     BitBlt(screen, 0, 0, W, H, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old_bitmap);

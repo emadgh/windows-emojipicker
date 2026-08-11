@@ -6,8 +6,8 @@ unsafe fn paint(hwnd: HWND) {
     let mut client: RECT = zeroed();
     GetClientRect(hwnd, &mut client);
 
-    // Render the complete frame off-screen and present it once. This removes
-    // the visible erase/repaint cycle that caused flashing on hover/scroll.
+    // Draw the entire frame into a memory DC, including the DirectWrite emoji
+    // overlay, and present it with one BitBlt. This avoids hover/scroll flash.
     let mem = CreateCompatibleDC(screen);
     let bitmap = if !mem.is_null() { CreateCompatibleBitmap(screen, client.right, client.bottom) } else { null_mut() };
     let buffered = !mem.is_null() && !bitmap.is_null();
@@ -24,8 +24,8 @@ unsafe fn paint(hwnd: HWND) {
     let emoji_face = wide("Segoe UI Emoji");
     let normal_font = CreateFontW(-15, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, normal_face.as_ptr());
     let small_font = CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, normal_face.as_ptr());
-    let symbol_font = CreateFontW(-23, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, symbol_face.as_ptr());
-    let mono_font = CreateFontW(-14, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, mono_face.as_ptr());
+    let symbol_font = CreateFontW(-22, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, symbol_face.as_ptr());
+    let mono_font = CreateFontW(-13, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, mono_face.as_ptr());
     let emoji_font = CreateFontW(-27, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, emoji_face.as_ptr());
 
     let search_rect = RECT { left: PAD, top: SEARCH_Y, right: POPUP_W - PAD, bottom: SEARCH_Y + SEARCH_H };
@@ -80,7 +80,7 @@ unsafe fn paint(hwnd: HWND) {
             hdc,
             card,
             if is_selected { palette.selected } else if is_hovered { palette.surface_alt } else { palette.surface },
-            if layout.emoji_dense { 9 } else { 11 },
+            if layout.dense { 9 } else { 11 },
         );
 
         match entry {
@@ -100,24 +100,27 @@ unsafe fn paint(hwnd: HWND) {
     }
 
     let update_label = match update::status() {
-        update::UpdateStatus::Checking => "بررسی…",
-        update::UpdateStatus::Downloading => "دریافت…",
-        update::UpdateStatus::UpToDate => "بروز ✓",
-        update::UpdateStatus::Available(_) => "نسخه جدید",
-        update::UpdateStatus::Failed(_) => "تلاش مجدد",
-        _ => "بروزرسانی",
+        update::UpdateStatus::Checking => "Checking",
+        update::UpdateStatus::Downloading => "Updating",
+        update::UpdateStatus::UpToDate => "Up to date",
+        update::UpdateStatus::Available(_) => "Update",
+        update::UpdateStatus::Failed(_) => "Retry",
+        _ => "Update",
     };
-    action_button(hdc, small_font, RECT { left: PAD, top: ACTION_Y, right: 104, bottom: ACTION_Y + ACTION_H }, "مدیریت", palette.surface, palette.text);
-    action_button(hdc, small_font, RECT { left: 112, top: ACTION_Y, right: 190, bottom: ACTION_Y + ACTION_H }, "درباره", palette.surface, palette.text);
+    action_button(hdc, small_font, RECT { left: PAD, top: ACTION_Y, right: 104, bottom: ACTION_Y + ACTION_H }, "Manage", palette.surface, palette.text);
+    action_button(hdc, small_font, RECT { left: 112, top: ACTION_Y, right: 190, bottom: ACTION_Y + ACTION_H }, "About", palette.surface, palette.text);
     action_button(hdc, small_font, RECT { left: 198, top: ACTION_Y, right: 302, bottom: ACTION_Y + ACTION_H }, update_label, palette.surface, if matches!(update::status(), update::UpdateStatus::Available(_) | update::UpdateStatus::Failed(_)) { palette.event } else { palette.text });
-    let theme_label = match settings::get().theme { settings::Theme::Dark => "☀ روشن", settings::Theme::Light => "☾ تیره" };
+    let theme_label = match settings::get().theme { settings::Theme::Dark => "Light", settings::Theme::Light => "Dark" };
     action_button(hdc, small_font, RECT { left: 310, top: ACTION_Y, right: POPUP_W - PAD, bottom: ACTION_Y + ACTION_H }, theme_label, palette.surface, palette.accent);
 
-    draw_text(hdc, small_font, &format!("Emoji Picker v{}", env!("CARGO_PKG_VERSION")), &mut RECT { left: PAD, top: FOOTER_Y, right: 168, bottom: FOOTER_Y + FOOTER_H }, palette.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    draw_text(hdc, small_font, "عماد قاسمی - emadghasemi.ir", &mut RECT { left: 172, top: FOOTER_Y, right: POPUP_W - PAD, bottom: FOOTER_Y + FOOTER_H }, palette.accent, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING | DT_END_ELLIPSIS);
+    // Match GahYar: both footer fields use the gold accent and are visually
+    // centered in their half of the footer instead of hugging the edges.
+    let split = POPUP_W / 2;
+    let mut version_rect = RECT { left: PAD, top: FOOTER_Y, right: split, bottom: FOOTER_Y + FOOTER_H };
+    draw_text(hdc, small_font, &format!("Windows Emoji Picker v{}", env!("CARGO_PKG_VERSION")), &mut version_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, palette.accent);
+    let mut author_rect = RECT { left: split, top: FOOTER_Y, right: POPUP_W - PAD, bottom: FOOTER_Y + FOOTER_H };
+    draw_text(hdc, small_font, "Emad Ghasemi - emadghasemi.ir", &mut author_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, palette.accent);
 
-    // Color emoji are drawn onto the off-screen DC too, so the final BitBlt is
-    // a single atomic presentation of both GDI and DirectWrite content.
     let color_ok = renderer::draw_color_emojis(hdc as *mut std::ffi::c_void, POPUP_W, POPUP_H, &emoji_draws);
     if !color_ok {
         for (text, mut rect) in emoji_fallbacks {
@@ -171,22 +174,22 @@ unsafe fn paint_non_emoji_item(
     mono_font: HFONT,
     palette: Palette,
 ) {
-    let mut rect = RECT { left: card.left + 8, top: card.top + 5, right: card.right - 8, bottom: card.bottom - 5 };
+    let mut rect = RECT { left: card.left + 7, top: card.top + 4, right: card.right - 7, bottom: card.bottom - 4 };
     let (font, format) = match kind {
-        ItemKind::Ascii => (mono_font, DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS),
-        ItemKind::Kaomoji | ItemKind::Symbol => (symbol_font, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS),
-        _ => (normal_font, DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS),
+        ItemKind::Symbol => (symbol_font, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS),
+        ItemKind::Ascii => (mono_font, DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_EDITCONTROL),
+        ItemKind::Kaomoji => (symbol_font, DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_EDITCONTROL),
+        ItemKind::Snippet => (normal_font, DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_EDITCONTROL),
+        ItemKind::Emoji => (normal_font, DT_CENTER | DT_VCENTER | DT_SINGLELINE),
     };
-    let preview = if kind == ItemKind::Ascii {
-        content.lines().take(3).collect::<Vec<_>>().join("\n")
-    } else {
-        content.replace('\r', "")
-    };
-    draw_text(hdc, font, &preview, &mut rect, format, palette.text);
+
+    // Pass the original text to DrawTextW. Explicit CR/LF characters are kept,
+    // so multiline snippets, kaomoji and ASCII art render on their real lines.
+    draw_text(hdc, font, content, &mut rect, format, palette.text);
 }
 
 unsafe fn action_button(hdc: HDC, font: HFONT, rect: RECT, text: &str, bg: COLORREF, fg: COLORREF) {
     round_fill(hdc, rect, bg, 9);
     let mut text_rect = rect;
-    draw_text(hdc, font, text, &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_RTLREADING, fg);
+    draw_text(hdc, font, text, &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, fg);
 }

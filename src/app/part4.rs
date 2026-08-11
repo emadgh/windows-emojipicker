@@ -4,18 +4,19 @@ struct GridLayout {
     rows: usize,
     gap: i32,
     card_h: i32,
-    emoji_dense: bool,
+    dense: bool,
 }
 
 fn grid_layout(state: &AppState) -> GridLayout {
-    let emoji_dense = ItemKind::ALL[state.category_index] == ItemKind::Emoji;
-    if emoji_dense {
+    let kind = ItemKind::ALL[state.category_index];
+    let dense = matches!(kind, ItemKind::Emoji | ItemKind::Symbol);
+    if dense {
         GridLayout {
-            cols: EMOJI_COLS,
-            rows: EMOJI_ROWS,
-            gap: EMOJI_GAP,
-            card_h: EMOJI_CARD_H,
-            emoji_dense: true,
+            cols: DENSE_COLS,
+            rows: DENSE_ROWS,
+            gap: DENSE_GAP,
+            card_h: DENSE_CARD_H,
+            dense: true,
         }
     } else {
         GridLayout {
@@ -23,7 +24,7 @@ fn grid_layout(state: &AppState) -> GridLayout {
             rows: STANDARD_ROWS,
             gap: STANDARD_GAP,
             card_h: STANDARD_CARD_H,
-            emoji_dense: false,
+            dense: false,
         }
     }
 }
@@ -92,8 +93,6 @@ fn normalize_search(value: &str) -> String {
         .to_lowercase()
         .chars()
         .map(|ch| match ch {
-            'ي' | 'ى' => 'ی',
-            'ك' => 'ک',
             '\u{200c}' | '\u{200d}' => ' ',
             other => other,
         })

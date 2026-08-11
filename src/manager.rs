@@ -82,11 +82,14 @@ pub unsafe fn show(owner: HWND, changed_message: u32) {
     GetWindowRect(owner, &mut owner_rect);
     let x = owner_rect.left + ((owner_rect.right - owner_rect.left) - W) / 2;
     let y = owner_rect.top + ((owner_rect.bottom - owner_rect.top) - H) / 2;
-    let title = wide("مدیریت موارد دلخواه");
+    let title = wide("Custom Items");
+
+    // Fully custom chrome: no WS_CAPTION or WS_SYSMENU, so the dialog matches
+    // the picker/GahYar visual language instead of showing Windows title-bar UI.
     let hwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW,
         class_name.as_ptr(), title.as_ptr(),
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        WS_POPUP,
         x.max(0), y.max(0), W, H,
         owner, null_mut(), instance, null(),
     );
@@ -261,8 +264,8 @@ unsafe fn save_current(hwnd: HWND) {
     });
     let content = get_text(content_edit);
     if content.trim().is_empty() {
-        let text = wide("محتوا نمی‌تواند خالی باشد.");
-        let title = wide("مدیریت موارد دلخواه");
+        let text = wide("Content cannot be empty.");
+        let title = wide("Custom Items");
         MessageBoxW(hwnd, text.as_ptr(), title.as_ptr(), MB_OK | MB_ICONINFORMATION);
         return;
     }
@@ -283,8 +286,8 @@ unsafe fn delete_current(hwnd: HWND) {
         (state.selected, state.owner, state.changed_message)
     });
     let Some(index) = selected else { return; };
-    let text = wide("این مورد دلخواه حذف شود؟");
-    let title = wide("حذف مورد");
+    let text = wide("Delete this custom item?");
+    let title = wide("Delete Item");
     if MessageBoxW(hwnd, text.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION) != IDYES {
         return;
     }
@@ -317,7 +320,7 @@ unsafe fn paint(hwnd: HWND) {
         let state = cell.borrow();
         (state.selected, state.list_scroll, state.kind, state.font, state.small_font)
     });
-    draw_text(mem, font, "مدیریت موارد دلخواه", RECT { left: 18, top: 12, right: 602, bottom: 44 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
+    draw_text(mem, font, "Custom Items", RECT { left: 18, top: 12, right: 602, bottom: 44 }, palette.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     round_fill(mem, RECT { left: LIST_X, top: LIST_Y, right: LIST_X + LIST_W, bottom: LIST_Y + LIST_H }, palette.background, 12);
 
     let items = custom::snapshot();
@@ -338,14 +341,14 @@ unsafe fn paint(hwnd: HWND) {
         draw_text(mem, small_font, item_kind.label(), rect, if kind == item_kind { palette.accent_text } else { palette.text }, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    draw_text(mem, small_font, "عنوان", RECT { left: 226, top: 92, right: 604, bottom: 114 }, palette.muted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
-    draw_text(mem, small_font, "محتوا", RECT { left: 226, top: 158, right: 604, bottom: 180 }, palette.muted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
-    draw_text(mem, small_font, "کلیدواژه‌های جستجو", RECT { left: 226, top: 308, right: 604, bottom: 330 }, palette.muted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
+    draw_text(mem, small_font, "Title", RECT { left: 226, top: 92, right: 604, bottom: 114 }, palette.muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(mem, small_font, "Content", RECT { left: 226, top: 158, right: 604, bottom: 180 }, palette.muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(mem, small_font, "Search keywords", RECT { left: 226, top: 308, right: 604, bottom: 330 }, palette.muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    button(mem, small_font, RECT { left: 226, top: 398, right: 306, bottom: 434 }, "جدید", palette.surface_alt, palette.text);
-    button(mem, small_font, RECT { left: 314, top: 398, right: 402, bottom: 434 }, "ذخیره", palette.accent, palette.accent_text);
-    button(mem, small_font, RECT { left: 410, top: 398, right: 502, bottom: 434 }, "حذف", palette.surface_alt, palette.danger);
-    button(mem, small_font, RECT { left: 510, top: 398, right: 604, bottom: 434 }, "بستن", palette.surface_alt, palette.text);
+    button(mem, small_font, RECT { left: 226, top: 398, right: 306, bottom: 434 }, "New", palette.surface_alt, palette.text);
+    button(mem, small_font, RECT { left: 314, top: 398, right: 402, bottom: 434 }, "Save", palette.accent, palette.accent_text);
+    button(mem, small_font, RECT { left: 410, top: 398, right: 502, bottom: 434 }, "Delete", palette.surface_alt, palette.danger);
+    button(mem, small_font, RECT { left: 510, top: 398, right: 604, bottom: 434 }, "Close", palette.surface_alt, palette.text);
 
     BitBlt(screen, 0, 0, client.right, client.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old_bitmap);
@@ -356,7 +359,7 @@ unsafe fn paint(hwnd: HWND) {
 
 unsafe fn button(hdc: HDC, font: HFONT, rect: RECT, text: &str, bg: COLORREF, fg: COLORREF) {
     round_fill(hdc, rect, bg, 10);
-    draw_text(hdc, font, text, rect, fg, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING);
+    draw_text(hdc, font, text, rect, fg, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 unsafe fn fill(hdc: HDC, rect: &RECT, color: COLORREF) {

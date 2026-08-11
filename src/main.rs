@@ -11,6 +11,8 @@ mod about;
 #[cfg(target_os = "windows")]
 mod app;
 #[cfg(target_os = "windows")]
+mod caret;
+#[cfg(target_os = "windows")]
 mod manager;
 #[cfg(target_os = "windows")]
 mod renderer;

@@ -1,6 +1,6 @@
 unsafe fn open_picker(hwnd: HWND) {
     let target = GetForegroundWindow();
-    let anchor = caret_or_cursor_position(target);
+    let anchor = caret_position(target);
     let (x, y) = popup_position(anchor);
 
     STATE.with(|cell| {
@@ -23,22 +23,45 @@ unsafe fn open_picker(hwnd: HWND) {
     InvalidateRect(hwnd, null(), 0);
 }
 
-unsafe fn caret_or_cursor_position(target: HWND) -> POINT {
+unsafe fn caret_position(target: HWND) -> POINT {
+    // UI Automation TextPattern2 is the primary path because many modern apps
+    // do not expose their caret through the legacy GUITHREADINFO structure.
+    if let Some((x, y)) = caret::focused_caret_point() {
+        return POINT { x, y };
+    }
+
+    // Native/legacy edit controls generally expose an exact system caret.
     if !target.is_null() {
         let thread_id = GetWindowThreadProcessId(target, null_mut());
         if thread_id != 0 {
             let mut info: GUITHREADINFO = zeroed();
             info.cbSize = size_of::<GUITHREADINFO>() as u32;
-            if GetGUIThreadInfo(thread_id, &mut info) != 0 && !info.hwndCaret.is_null() {
-                let mut point = POINT { x: info.rcCaret.left, y: info.rcCaret.bottom };
-                if ClientToScreen(info.hwndCaret, &mut point) != 0 { return point; }
+            if GetGUIThreadInfo(thread_id, &mut info) != 0 {
+                if !info.hwndCaret.is_null() {
+                    let mut point = POINT { x: info.rcCaret.left, y: info.rcCaret.bottom };
+                    if ClientToScreen(info.hwndCaret, &mut point) != 0 {
+                        return point;
+                    }
+                }
+
+                // If the application does not expose a caret, stay anchored to
+                // the focused control rather than jumping to the mouse pointer.
+                if !info.hwndFocus.is_null() {
+                    let mut rect: RECT = zeroed();
+                    if GetWindowRect(info.hwndFocus, &mut rect) != 0 {
+                        return POINT { x: rect.left + 14, y: rect.bottom.min(rect.top + 40) };
+                    }
+                }
             }
+        }
+
+        let mut rect: RECT = zeroed();
+        if GetWindowRect(target, &mut rect) != 0 {
+            return POINT { x: rect.left + 24, y: rect.top + 48 };
         }
     }
 
-    let mut point: POINT = zeroed();
-    GetCursorPos(&mut point);
-    point
+    POINT { x: 32, y: 32 }
 }
 
 unsafe fn popup_position(anchor: POINT) -> (i32, i32) {
