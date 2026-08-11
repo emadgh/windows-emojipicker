@@ -45,7 +45,8 @@ const CMD_MANAGE: usize = 1002;
 const CMD_ABOUT: usize = 1003;
 const CMD_UPDATE: usize = 1004;
 const CMD_THEME: usize = 1005;
-const CMD_EXIT: usize = 1006;
+const CMD_AUTO_UPDATE: usize = 1006;
+const CMD_EXIT: usize = 1007;
 const UPDATE_CHECK_TIMER_ID: usize = 1;
 const UPDATE_CHECK_INTERVAL_MS: u32 = 6 * 60 * 60 * 1000;
 
@@ -229,6 +230,7 @@ unsafe extern "system" fn wnd_proc(
                 CMD_ABOUT => about::show(hwnd, WM_REQUEST_UPDATE),
                 CMD_UPDATE => request_manual_update(hwnd),
                 CMD_THEME => toggle_theme(hwnd),
+                CMD_AUTO_UPDATE => toggle_auto_update(hwnd),
                 CMD_EXIT => { DestroyWindow(hwnd); }
                 _ => {}
             }
@@ -346,6 +348,22 @@ unsafe fn request_manual_update(hwnd: HWND) {
         _ => { update::start_check(hwnd, WM_UPDATE_STATUS); }
     }
     about::invalidate();
+}
+
+unsafe fn toggle_auto_update(hwnd: HWND) {
+    let enabled = !settings::get().auto_update;
+    settings::set_auto_update(enabled);
+    if enabled {
+        match update::status() {
+            update::UpdateStatus::Available(_) | update::UpdateStatus::Failed(_) => {
+                update::start_download(hwnd, WM_UPDATE_STATUS, WM_APPLY_UPDATE);
+            }
+            update::UpdateStatus::Idle => { update::start_check(hwnd, WM_UPDATE_STATUS); }
+            _ => {}
+        }
+    }
+    about::invalidate();
+    InvalidateRect(hwnd, null(), 0);
 }
 
 unsafe fn toggle_theme(hwnd: HWND) {
