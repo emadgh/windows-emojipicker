@@ -3,7 +3,7 @@ use std::{cell::RefCell, ffi::c_void};
 use windows::{
     core::{w, PCWSTR, Result as WinResult},
     Win32::{
-        Foundation::{BOOL, RECT},
+        Foundation::{FALSE, RECT},
         Graphics::{
             Direct2D::{
                 Common::{D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D_RECT_F},
@@ -156,7 +156,7 @@ unsafe fn preferred_emoji_font(factory: &IDWriteFactory) -> Vec<u16> {
     {
         if let Some(collection) = collection {
             let mut index = 0u32;
-            let mut exists = BOOL(0);
+            let mut exists = FALSE;
             if collection
                 .FindFamilyName(PCWSTR(noto.as_ptr()), &mut index, &mut exists)
                 .is_ok()

@@ -7,7 +7,6 @@ use std::{
 };
 
 use windows_sys::{
-    core::PCWSTR,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
