@@ -1,321 +1,192 @@
 unsafe fn paint(hwnd: HWND) {
     let mut ps: PAINTSTRUCT = zeroed();
-    let hdc = BeginPaint(hwnd, &mut ps);
-    if hdc.is_null() {
-        return;
-    }
+    let screen = BeginPaint(hwnd, &mut ps);
+    if screen.is_null() { return; }
 
     let mut client: RECT = zeroed();
     GetClientRect(hwnd, &mut client);
 
-    fill(hdc, &client, rgb(27, 27, 30));
+    // Render the complete frame off-screen and present it once. This removes
+    // the visible erase/repaint cycle that caused flashing on hover/scroll.
+    let mem = CreateCompatibleDC(screen);
+    let bitmap = if !mem.is_null() { CreateCompatibleBitmap(screen, client.right, client.bottom) } else { null_mut() };
+    let buffered = !mem.is_null() && !bitmap.is_null();
+    let old_bitmap = if buffered { SelectObject(mem, bitmap as _) } else { null_mut() };
+    let hdc = if buffered { mem } else { screen };
+
+    let palette = Palette::current();
+    fill(hdc, &client, palette.background);
+    SetBkMode(hdc, TRANSPARENT as i32);
 
     let normal_face = wide("Segoe UI");
+    let symbol_face = wide("Segoe UI Symbol");
+    let mono_face = wide("Consolas");
     let emoji_face = wide("Segoe UI Emoji");
-    let normal_font = CreateFontW(
-        -16,
-        0,
-        0,
-        0,
-        400,
-        0,
-        0,
-        0,
-        1,
-        0,
-        0,
-        5,
-        0,
-        normal_face.as_ptr(),
-    );
-    let small_font = CreateFontW(
-        -14,
-        0,
-        0,
-        0,
-        400,
-        0,
-        0,
-        0,
-        1,
-        0,
-        0,
-        5,
-        0,
-        normal_face.as_ptr(),
-    );
-    let content_font = CreateFontW(
-        -27,
-        0,
-        0,
-        0,
-        400,
-        0,
-        0,
-        0,
-        1,
-        0,
-        0,
-        5,
-        0,
-        emoji_face.as_ptr(),
-    );
+    let normal_font = CreateFontW(-15, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, normal_face.as_ptr());
+    let small_font = CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, normal_face.as_ptr());
+    let symbol_font = CreateFontW(-23, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, symbol_face.as_ptr());
+    let mono_font = CreateFontW(-14, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, mono_face.as_ptr());
+    let emoji_font = CreateFontW(-27, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0, CLEARTYPE_QUALITY as u32, 0, emoji_face.as_ptr());
 
-    SetBkMode(hdc, 1);
-
-    // Search field.
-    let search_rect = RECT {
-        left: PAD,
-        top: SEARCH_Y,
-        right: POPUP_W - PAD,
-        bottom: SEARCH_Y + SEARCH_H,
-    };
-    fill(hdc, &search_rect, rgb(42, 42, 46));
-
+    let search_rect = RECT { left: PAD, top: SEARCH_Y, right: POPUP_W - PAD, bottom: SEARCH_Y + SEARCH_H };
+    round_fill(hdc, search_rect, palette.surface, 12);
     let query = STATE.with(|cell| String::from_utf16_lossy(&cell.borrow().query_utf16));
-    let mut text_rect = RECT {
-        left: search_rect.left + 14,
-        top: search_rect.top,
-        right: search_rect.right - 12,
-        bottom: search_rect.bottom,
-    };
-    if query.is_empty() {
-        draw_text(
-            hdc,
-            normal_font,
-            "Search emoji, kaomoji, ASCII, text...",
-            &mut text_rect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-            rgb(145, 145, 153),
-        );
-    } else {
-        draw_text(
-            hdc,
-            normal_font,
-            &query,
-            &mut text_rect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-            rgb(241, 241, 244),
-        );
-    }
+    let mut text_rect = RECT { left: search_rect.left + 14, top: search_rect.top, right: search_rect.right - 12, bottom: search_rect.bottom };
+    draw_text(
+        hdc,
+        normal_font,
+        if query.is_empty() { "Search emoji, kaomoji, ASCII, text..." } else { &query },
+        &mut text_rect,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+        if query.is_empty() { palette.muted } else { palette.text },
+    );
 
-    let (category_index, selected, scroll, hovered, filtered_count, layout, visible_items) =
-        STATE.with(|cell| {
-            let state = cell.borrow();
-            let layout = grid_layout(&state);
-            let visible_items = state
-                .filtered
-                .iter()
-                .skip(state.scroll)
-                .take(layout.cols * layout.rows)
-                .copied()
-                .collect::<Vec<_>>();
-            (
-                state.category_index,
-                state.selected,
-                state.scroll,
-                state.hovered,
-                state.filtered.len(),
-                layout,
-                visible_items,
-            )
-        });
+    let (category_index, selected, scroll, hovered, layout, visible_items) = STATE.with(|cell| {
+        let state = cell.borrow();
+        let layout = grid_layout(&state);
+        let visible_items = state.filtered.iter().skip(state.scroll).take(layout.cols * layout.rows).copied().collect::<Vec<_>>();
+        (state.category_index, state.selected, state.scroll, state.hovered, layout, visible_items)
+    });
 
-    // Category tabs.
     let tab_width = (POPUP_W - PAD * 2) / ItemKind::ALL.len() as i32;
-    for index in 0..ItemKind::ALL.len() {
+    for (index, kind) in ItemKind::ALL.iter().copied().enumerate() {
         let left = PAD + tab_width * index as i32;
-        let right = if index + 1 == ItemKind::ALL.len() {
-            POPUP_W - PAD
-        } else {
-            left + tab_width - 2
-        };
-        let tab = RECT {
-            left,
-            top: TABS_Y,
-            right,
-            bottom: TABS_Y + TABS_H,
-        };
-        fill(
-            hdc,
-            &tab,
-            if index == category_index {
-                rgb(64, 94, 159)
-            } else {
-                rgb(35, 35, 39)
-            },
-        );
-
-        let label = match ItemKind::ALL[index] {
-            None => "All",
-            Some(kind) => kind.label(),
-        };
+        let right = if index + 1 == ItemKind::ALL.len() { POPUP_W - PAD } else { left + tab_width - 3 };
+        let tab = RECT { left, top: TABS_Y, right, bottom: TABS_Y + TABS_H };
+        round_fill(hdc, tab, if index == category_index { palette.accent } else { palette.surface }, 9);
         let mut label_rect = tab;
         draw_text(
-            hdc,
-            small_font,
-            label,
-            &mut label_rect,
+            hdc, small_font, kind.label(), &mut label_rect,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-            if index == category_index {
-                rgb(255, 255, 255)
-            } else {
-                rgb(190, 190, 198)
-            },
+            if index == category_index { palette.accent_text } else { palette.muted },
         );
     }
 
-    // Grid. Emoji cells are intentionally icon-only; names remain searchable
-    // metadata and are not drawn under the glyph.
     let cell_w = card_width(layout);
     let catalog = items();
     let mut emoji_draws = Vec::<EmojiDraw<'_>>::new();
     let mut emoji_fallbacks = Vec::<(&str, RECT)>::new();
 
-    for (slot, item_index) in visible_items.iter().copied().enumerate() {
+    for (slot, entry) in visible_items.iter().copied().enumerate() {
         let position = scroll + slot;
-        let item = catalog[item_index];
         let row = slot / layout.cols;
         let col = slot % layout.cols;
         let x = PAD + col as i32 * (cell_w + layout.gap);
         let y = CONTENT_TOP + row as i32 * (layout.card_h + layout.gap);
-        let card = RECT {
-            left: x,
-            top: y,
-            right: x + cell_w,
-            bottom: y + layout.card_h,
-        };
-
+        let card = RECT { left: x, top: y, right: x + cell_w, bottom: y + layout.card_h };
         let is_selected = position == selected;
         let is_hovered = hovered == Some(position);
-        let color = if is_selected {
-            rgb(65, 78, 108)
-        } else if is_hovered {
-            rgb(51, 51, 57)
-        } else {
-            rgb(37, 37, 41)
-        };
-        fill(hdc, &card, color);
-
-        if item.kind == ItemKind::Emoji {
-            let glyph_rect = RECT {
-                left: card.left + 2,
-                top: card.top + 1,
-                right: card.right - 2,
-                bottom: card.bottom - 1,
-            };
-            emoji_draws.push(EmojiDraw {
-                text: item.content,
-                left: glyph_rect.left,
-                top: glyph_rect.top,
-                right: glyph_rect.right,
-                bottom: glyph_rect.bottom,
-            });
-            emoji_fallbacks.push((item.content, glyph_rect));
-            continue;
-        }
-
-        let show_title = !layout.emoji_dense;
-        let mut content_rect = if show_title {
-            RECT {
-                left: card.left + 8,
-                top: card.top + 5,
-                right: card.right - 8,
-                bottom: card.top + 39,
-            }
-        } else {
-            RECT {
-                left: card.left + 5,
-                top: card.top + 3,
-                right: card.right - 5,
-                bottom: card.bottom - 3,
-            }
-        };
-        let preview = preview_text(item);
-        let is_symbol = item.kind == ItemKind::Symbol;
-        draw_text(
+        round_fill(
             hdc,
-            if is_symbol { content_font } else { normal_font },
-            &preview,
-            &mut content_rect,
-            if is_symbol {
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS
-            } else {
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS
-            },
-            rgb(245, 245, 247),
+            card,
+            if is_selected { palette.selected } else if is_hovered { palette.surface_alt } else { palette.surface },
+            if layout.emoji_dense { 9 } else { 11 },
         );
 
-        if show_title {
-            let mut title_rect = RECT {
-                left: card.left + 8,
-                top: card.top + 39,
-                right: card.right - 8,
-                bottom: card.bottom - 4,
-            };
-            draw_text(
-                hdc,
-                small_font,
-                item.title,
-                &mut title_rect,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-                rgb(158, 158, 168),
-            );
+        match entry {
+            CatalogRef::Builtin(item_index) => {
+                let item = catalog[item_index];
+                paint_picker_item(
+                    hdc, item.kind, item.content, card, normal_font, symbol_font, mono_font,
+                    palette, &mut emoji_draws, &mut emoji_fallbacks,
+                );
+            }
+            CatalogRef::Custom(item_index) => {
+                if let Some(item) = custom::get(item_index) {
+                    paint_non_emoji_item(hdc, item.kind, &item.content, card, normal_font, symbol_font, mono_font, palette);
+                }
+            }
         }
     }
 
-    let footer_rect = RECT {
-        left: PAD,
-        top: FOOTER_Y,
-        right: POPUP_W - PAD,
-        bottom: FOOTER_Y + FOOTER_H,
+    let update_label = match update::status() {
+        update::UpdateStatus::Checking => "بررسی…",
+        update::UpdateStatus::Downloading => "دریافت…",
+        update::UpdateStatus::UpToDate => "بروز ✓",
+        update::UpdateStatus::Available(_) => "نسخه جدید",
+        update::UpdateStatus::Failed(_) => "تلاش مجدد",
+        _ => "بروزرسانی",
     };
-    let status = if filtered_count == 0 {
-        "No results".to_string()
-    } else {
-        format!("{} results  •  Enter: insert  •  Esc: close", filtered_count)
-    };
-    let mut footer_text = footer_rect;
-    draw_text(
-        hdc,
-        small_font,
-        &status,
-        &mut footer_text,
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-        rgb(125, 125, 134),
-    );
+    action_button(hdc, small_font, RECT { left: PAD, top: ACTION_Y, right: 104, bottom: ACTION_Y + ACTION_H }, "مدیریت", palette.surface, palette.text);
+    action_button(hdc, small_font, RECT { left: 112, top: ACTION_Y, right: 190, bottom: ACTION_Y + ACTION_H }, "درباره", palette.surface, palette.text);
+    action_button(hdc, small_font, RECT { left: 198, top: ACTION_Y, right: 302, bottom: ACTION_Y + ACTION_H }, update_label, palette.surface, if matches!(update::status(), update::UpdateStatus::Available(_) | update::UpdateStatus::Failed(_)) { palette.event } else { palette.text });
+    let theme_label = match settings::get().theme { settings::Theme::Dark => "☀ روشن", settings::Theme::Light => "☾ تیره" };
+    action_button(hdc, small_font, RECT { left: 310, top: ACTION_Y, right: POPUP_W - PAD, bottom: ACTION_Y + ACTION_H }, theme_label, palette.surface, palette.accent);
 
-    // Direct2D/DirectWrite color-font overlay. If initialization or drawing is
-    // unavailable, fall back to the old monochrome GDI path.
-    let color_ok = renderer::draw_color_emojis(
-        hdc as *mut std::ffi::c_void,
-        POPUP_W,
-        POPUP_H,
-         &emoji_draws,
-    );
+    draw_text(hdc, small_font, &format!("Emoji Picker v{}", env!("CARGO_PKG_VERSION")), &mut RECT { left: PAD, top: FOOTER_Y, right: 168, bottom: FOOTER_Y + FOOTER_H }, palette.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(hdc, small_font, "عماد قاسمی - emadghasemi.ir", &mut RECT { left: 172, top: FOOTER_Y, right: POPUP_W - PAD, bottom: FOOTER_Y + FOOTER_H }, palette.accent, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_RTLREADING | DT_END_ELLIPSIS);
+
+    // Color emoji are drawn onto the off-screen DC too, so the final BitBlt is
+    // a single atomic presentation of both GDI and DirectWrite content.
+    let color_ok = renderer::draw_color_emojis(hdc as *mut std::ffi::c_void, POPUP_W, POPUP_H, &emoji_draws);
     if !color_ok {
         for (text, mut rect) in emoji_fallbacks {
-            draw_text(
-                hdc,
-                content_font,
-                text,
-                &mut rect,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-                rgb(245, 245, 247),
-            );
+            draw_text(hdc, emoji_font, text, &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, palette.text);
         }
     }
 
-    if !normal_font.is_null() {
-        DeleteObject(normal_font as _);
-    }
-    if !small_font.is_null() {
-        DeleteObject(small_font as _);
-    }
-    if !content_font.is_null() {
-        DeleteObject(content_font as _);
+    if buffered {
+        BitBlt(screen, 0, 0, client.right, client.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old_bitmap);
+        DeleteObject(bitmap as _);
+        DeleteDC(mem);
+    } else if !mem.is_null() {
+        DeleteDC(mem);
     }
 
+    for font in [normal_font, small_font, symbol_font, mono_font, emoji_font] {
+        if !font.is_null() { DeleteObject(font as _); }
+    }
     EndPaint(hwnd, &ps);
 }
 
+unsafe fn paint_picker_item<'a>(
+    hdc: HDC,
+    kind: ItemKind,
+    content: &'a str,
+    card: RECT,
+    normal_font: HFONT,
+    symbol_font: HFONT,
+    mono_font: HFONT,
+    palette: Palette,
+    emoji_draws: &mut Vec<EmojiDraw<'a>>,
+    emoji_fallbacks: &mut Vec<(&'a str, RECT)>,
+) {
+    if kind == ItemKind::Emoji {
+        let glyph_rect = RECT { left: card.left + 2, top: card.top + 1, right: card.right - 2, bottom: card.bottom - 1 };
+        emoji_draws.push(EmojiDraw { text: content, left: glyph_rect.left, top: glyph_rect.top, right: glyph_rect.right, bottom: glyph_rect.bottom });
+        emoji_fallbacks.push((content, glyph_rect));
+        return;
+    }
+    paint_non_emoji_item(hdc, kind, content, card, normal_font, symbol_font, mono_font, palette);
+}
+
+unsafe fn paint_non_emoji_item(
+    hdc: HDC,
+    kind: ItemKind,
+    content: &str,
+    card: RECT,
+    normal_font: HFONT,
+    symbol_font: HFONT,
+    mono_font: HFONT,
+    palette: Palette,
+) {
+    let mut rect = RECT { left: card.left + 8, top: card.top + 5, right: card.right - 8, bottom: card.bottom - 5 };
+    let (font, format) = match kind {
+        ItemKind::Ascii => (mono_font, DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS),
+        ItemKind::Kaomoji | ItemKind::Symbol => (symbol_font, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS),
+        _ => (normal_font, DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS),
+    };
+    let preview = if kind == ItemKind::Ascii {
+        content.lines().take(3).collect::<Vec<_>>().join("\n")
+    } else {
+        content.replace('\r', "")
+    };
+    draw_text(hdc, font, &preview, &mut rect, format, palette.text);
+}
+
+unsafe fn action_button(hdc: HDC, font: HFONT, rect: RECT, text: &str, bg: COLORREF, fg: COLORREF) {
+    round_fill(hdc, rect, bg, 9);
+    let mut text_rect = rect;
+    draw_text(hdc, font, text, &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_RTLREADING, fg);
+}
