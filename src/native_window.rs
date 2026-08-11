@@ -26,6 +26,22 @@ impl NativeWindowBase {
         Self { width, height, radius }
     }
 
+    /// Build a base from the current client area. Useful for resizable windows
+    /// so drag hit-testing automatically follows the new size.
+    pub unsafe fn from_client(hwnd: HWND, radius: i32) -> Option<Self> {
+        let mut rect: RECT = zeroed();
+        if GetClientRect(hwnd, &mut rect) == 0 {
+            return None;
+        }
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        if width <= 0 || height <= 0 {
+            None
+        } else {
+            Some(Self::new(width, height, radius))
+        }
+    }
+
     pub unsafe fn apply_rounding(self, hwnd: HWND) {
         let region = CreateRoundRectRgn(
             0,
@@ -37,6 +53,20 @@ impl NativeWindowBase {
         );
         if !region.is_null() {
             SetWindowRgn(hwnd, region, 1);
+        }
+    }
+
+    /// Apply rounded clipping using the current full window dimensions. This is
+    /// intended for resizable frameless windows and can be called after WM_SIZE.
+    pub unsafe fn apply_rounding_to_window(hwnd: HWND, radius: i32) {
+        let mut rect: RECT = zeroed();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return;
+        }
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        if width > 0 && height > 0 {
+            Self::new(width, height, radius).apply_rounding(hwnd);
         }
     }
 
