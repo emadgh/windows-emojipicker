@@ -15,15 +15,9 @@ unsafe fn open_picker(hwnd: HWND) {
         rebuild_filter(&mut state);
     });
 
-    SetWindowPos(
-        hwnd,
-        HWND_TOPMOST,
-        x,
-        y,
-        POPUP_W,
-        POPUP_H,
-        SWP_SHOWWINDOW,
-    );
+    let region = CreateRoundRectRgn(0, 0, POPUP_W + 1, POPUP_H + 1, 18, 18);
+    SetWindowRgn(hwnd, region, 1);
+    SetWindowPos(hwnd, HWND_TOPMOST, x, y, POPUP_W, POPUP_H, SWP_SHOWWINDOW);
     SetForegroundWindow(hwnd);
     SetFocus(hwnd);
     InvalidateRect(hwnd, null(), 0);
@@ -36,13 +30,8 @@ unsafe fn caret_or_cursor_position(target: HWND) -> POINT {
             let mut info: GUITHREADINFO = zeroed();
             info.cbSize = size_of::<GUITHREADINFO>() as u32;
             if GetGUIThreadInfo(thread_id, &mut info) != 0 && !info.hwndCaret.is_null() {
-                let mut point = POINT {
-                    x: info.rcCaret.left,
-                    y: info.rcCaret.bottom,
-                };
-                if ClientToScreen(info.hwndCaret, &mut point) != 0 {
-                    return point;
-                }
+                let mut point = POINT { x: info.rcCaret.left, y: info.rcCaret.bottom };
+                if ClientToScreen(info.hwndCaret, &mut point) != 0 { return point; }
             }
         }
     }
@@ -54,38 +43,20 @@ unsafe fn caret_or_cursor_position(target: HWND) -> POINT {
 
 unsafe fn popup_position(anchor: POINT) -> (i32, i32) {
     let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
-    let mut work = RECT {
-        left: 0,
-        top: 0,
-        right: anchor.x + POPUP_W,
-        bottom: anchor.y + POPUP_H,
-    };
+    let mut work = RECT { left: 0, top: 0, right: anchor.x + POPUP_W, bottom: anchor.y + POPUP_H };
 
     if !monitor.is_null() {
         let mut info: MONITORINFO = zeroed();
         info.cbSize = size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) != 0 {
-            work = info.rcWork;
-        }
+        if GetMonitorInfoW(monitor, &mut info) != 0 { work = info.rcWork; }
     }
 
     let mut x = anchor.x;
     let mut y = anchor.y + 10;
-
-    if x + POPUP_W > work.right {
-        x = work.right - POPUP_W;
-    }
-    if x < work.left {
-        x = work.left;
-    }
-
-    if y + POPUP_H > work.bottom {
-        y = anchor.y - POPUP_H - 10;
-    }
-    if y < work.top {
-        y = work.top;
-    }
-
+    if x + POPUP_W > work.right { x = work.right - POPUP_W; }
+    if x < work.left { x = work.left; }
+    if y + POPUP_H > work.bottom { y = anchor.y - POPUP_H - 10; }
+    if y < work.top { y = work.top; }
     (x, y)
 }
 
@@ -93,14 +64,8 @@ unsafe fn handle_keydown(hwnd: HWND, wparam: WPARAM) -> bool {
     let key = wparam as u16;
 
     match key {
-        VK_ESCAPE => {
-            ShowWindow(hwnd, SW_HIDE);
-            true
-        }
-        VK_RETURN => {
-            insert_selected(hwnd);
-            true
-        }
+        VK_ESCAPE => { ShowWindow(hwnd, SW_HIDE); true }
+        VK_RETURN => { insert_selected(hwnd); true }
         VK_TAB => {
             STATE.with(|cell| {
                 let mut state = cell.borrow_mut();
@@ -147,13 +112,9 @@ unsafe fn handle_char(hwnd: HWND, wparam: WPARAM) -> bool {
     let unit = wparam as u16;
 
     match unit {
-        0x08 => {
-            STATE.with(|cell| pop_utf16_scalar(&mut cell.borrow_mut().query_utf16));
-        }
+        0x08 => { STATE.with(|cell| pop_utf16_scalar(&mut cell.borrow_mut().query_utf16)); }
         0x09 | 0x0d | 0x1b => return true,
-        0x20..=0xffff => {
-            STATE.with(|cell| cell.borrow_mut().query_utf16.push(unit));
-        }
+        0x20..=0xffff => { STATE.with(|cell| cell.borrow_mut().query_utf16.push(unit)); }
         _ => return false,
     }
 
@@ -172,11 +133,8 @@ fn pop_utf16_scalar(value: &mut Vec<u16>) {
     if let Some(last) = value.pop() {
         if (0xdc00..=0xdfff).contains(&last) {
             if let Some(previous) = value.last() {
-                if (0xd800..=0xdbff).contains(previous) {
-                    value.pop();
-                }
+                if (0xd800..=0xdbff).contains(previous) { value.pop(); }
             }
         }
     }
 }
-
