@@ -28,7 +28,8 @@ use crate::{
     custom,
     data::items,
     manager,
-    model::{ItemKind, PickerItem},
+    model::ItemKind,
+    native_window::NativeWindowBase,
     renderer::{self, EmojiDraw},
     settings,
     theme::Palette,
@@ -59,6 +60,7 @@ const CF_UNICODETEXT_FORMAT: u32 = 13;
 
 const POPUP_W: i32 = 430;
 const POPUP_H: i32 = 478;
+const WINDOW_BASE: NativeWindowBase = NativeWindowBase::new(POPUP_W, POPUP_H, 18);
 const PAD: i32 = 12;
 const SEARCH_Y: i32 = 12;
 const SEARCH_H: i32 = 44;
@@ -307,15 +309,8 @@ unsafe extern "system" fn wnd_proc(
             if handle_char(hwnd, wparam) { return 0; }
         }
         WM_NCHITTEST => {
-            let (screen_x, screen_y) = point_from_lparam(lparam);
-            let mut point = POINT { x: screen_x, y: screen_y };
-            if ScreenToClient(hwnd, &mut point) != 0 {
-                if is_draggable_background(point.x, point.y) {
-                    return HTCAPTION as LRESULT;
-                }
-                if (0..POPUP_W).contains(&point.x) && (0..POPUP_H).contains(&point.y) {
-                    return HTCLIENT as LRESULT;
-                }
+            if let Some(hit) = WINDOW_BASE.drag_hit_test(hwnd, lparam, |x, y| !is_draggable_background(x, y)) {
+                return hit;
             }
         }
         WM_MOUSEMOVE => {

@@ -1,10 +1,14 @@
 unsafe fn open_picker(hwnd: HWND, origin: OpenOrigin) {
     let target = GetForegroundWindow();
     let (x, y) = match origin {
-        OpenOrigin::Tray => tray_popup_position(hwnd),
+        // Match GahYar exactly for an actual tray click: the cursor is sitting
+        // on the icon, so center the popup on that X coordinate and place it
+        // at the bottom of the monitor work area.
+        OpenOrigin::Tray => WINDOW_BASE.above_taskbar_at_cursor(8),
         OpenOrigin::Hotkey => caret_position(target)
-            .map(|point| unsafe { popup_position(point) })
-            .unwrap_or_else(|| tray_popup_position(hwnd)),
+            .map(|point| unsafe { WINDOW_BASE.near_anchor(point, 10) })
+            .or_else(|| unsafe { WINDOW_BASE.above_tray_icon(hwnd, TRAY_ICON_ID, 8) })
+            .unwrap_or_else(|| unsafe { WINDOW_BASE.above_taskbar_at_cursor(8) }),
     };
 
     STATE.with(|cell| {
@@ -19,8 +23,7 @@ unsafe fn open_picker(hwnd: HWND, origin: OpenOrigin) {
         rebuild_filter(&mut state);
     });
 
-    let region = CreateRoundRectRgn(0, 0, POPUP_W + 1, POPUP_H + 1, 18, 18);
-    SetWindowRgn(hwnd, region, 1);
+    WINDOW_BASE.apply_rounding(hwnd);
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, POPUP_W, POPUP_H, SWP_SHOWWINDOW);
     SetForegroundWindow(hwnd);
     SetFocus(hwnd);
@@ -54,8 +57,6 @@ unsafe fn caret_position(target: HWND) -> Option<POINT> {
         }
     }
 
-    // Do not guess from the active window or mouse. If a real caret cannot be
-    // resolved, the caller deliberately falls back to the system-tray icon.
     None
 }
 
@@ -77,8 +78,6 @@ unsafe fn anchor_is_usable(point: POINT, target: HWND) -> bool {
         return true;
     }
 
-    // UIA can occasionally return a stale caret from a previously focused app.
-    // Requiring the anchor to be near the active top-level window prevents that.
     const MARGIN: i32 = 96;
     point.x >= rect.left.saturating_sub(MARGIN)
         && point.x <= rect.right.saturating_add(MARGIN)
@@ -88,95 +87,6 @@ unsafe fn anchor_is_usable(point: POINT, target: HWND) -> bool {
 
 fn rect_is_usable(rect: RECT) -> bool {
     rect.right > rect.left && rect.bottom > rect.top
-}
-
-unsafe fn popup_position(anchor: POINT) -> (i32, i32) {
-    let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
-    let mut work = RECT { left: 0, top: 0, right: anchor.x + POPUP_W, bottom: anchor.y + POPUP_H };
-
-    if !monitor.is_null() {
-        let mut info: MONITORINFO = zeroed();
-        info.cbSize = size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) != 0 { work = info.rcWork; }
-    }
-
-    let mut x = anchor.x;
-    let mut y = anchor.y + 10;
-    if x + POPUP_W > work.right { x = work.right - POPUP_W; }
-    if x < work.left { x = work.left; }
-    if y + POPUP_H > work.bottom { y = anchor.y - POPUP_H - 10; }
-    if y < work.top { y = work.top; }
-    (x, y)
-}
-
-unsafe fn tray_popup_position(hwnd: HWND) -> (i32, i32) {
-    const GAP: i32 = 8;
-
-    if let Some(icon) = tray_icon_rect(hwnd) {
-        let center = POINT {
-            x: icon.left + (icon.right - icon.left) / 2,
-            y: icon.top + (icon.bottom - icon.top) / 2,
-        };
-        let monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
-        if !monitor.is_null() {
-            let mut info: MONITORINFO = zeroed();
-            info.cbSize = size_of::<MONITORINFO>() as u32;
-            if GetMonitorInfoW(monitor, &mut info) != 0 {
-                let monitor_rect = info.rcMonitor;
-                let work = info.rcWork;
-                let (mut x, mut y) = if work.bottom < monitor_rect.bottom {
-                    // Standard bottom taskbar: open directly above the tray icon.
-                    (center.x - POPUP_W / 2, icon.top - POPUP_H - GAP)
-                } else if work.top > monitor_rect.top {
-                    // Top taskbar.
-                    (center.x - POPUP_W / 2, icon.bottom + GAP)
-                } else if work.right < monitor_rect.right {
-                    // Right taskbar.
-                    (icon.left - POPUP_W - GAP, center.y - POPUP_H / 2)
-                } else if work.left > monitor_rect.left {
-                    // Left taskbar.
-                    (icon.right + GAP, center.y - POPUP_H / 2)
-                } else {
-                    // Auto-hidden/overlay taskbar: Windows normally keeps the tray
-                    // along the bottom edge, so prefer the same visual placement.
-                    (center.x - POPUP_W / 2, icon.top - POPUP_H - GAP)
-                };
-
-                clamp_popup_to_work_area(&mut x, &mut y, work);
-                return (x, y);
-            }
-        }
-    }
-
-    // Extremely defensive fallback for Explorer restarts or a temporarily
-    // unavailable tray rect. Keep the picker by the taskbar side of the primary
-    // work area instead of placing it at a screen corner chosen from a caret guess.
-    let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
-    let mut work = RECT {
-        left: 0,
-        top: 0,
-        right: GetSystemMetrics(SM_CXSCREEN),
-        bottom: GetSystemMetrics(SM_CYSCREEN),
-    };
-    if !monitor.is_null() {
-        let mut info: MONITORINFO = zeroed();
-        info.cbSize = size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) != 0 {
-            work = info.rcWork;
-        }
-    }
-
-    (
-        (work.right - POPUP_W - 12).max(work.left),
-        (work.bottom - POPUP_H - 12).max(work.top),
-    )
-}
-
-fn clamp_popup_to_work_area(x: &mut i32, y: &mut i32, work: RECT) {
-    let max_x = (work.right - POPUP_W).max(work.left);
-    let max_y = (work.bottom - POPUP_H).max(work.top);
-    *x = (*x).clamp(work.left, max_x);
-    *y = (*y).clamp(work.top, max_y);
 }
 
 unsafe fn handle_keydown(hwnd: HWND, wparam: WPARAM) -> bool {
