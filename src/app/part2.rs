@@ -3,7 +3,7 @@ unsafe fn open_picker(hwnd: HWND, origin: OpenOrigin) {
     let (x, y) = match origin {
         OpenOrigin::Tray => tray_popup_position(hwnd),
         OpenOrigin::Hotkey => caret_position(target)
-            .map(popup_position)
+            .map(|point| unsafe { popup_position(point) })
             .unwrap_or_else(|| tray_popup_position(hwnd)),
     };
 
