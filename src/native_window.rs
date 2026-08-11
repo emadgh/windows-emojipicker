@@ -1,8 +1,8 @@
 use std::mem::{size_of, zeroed};
 
 use windows_sys::Win32::{
-    Foundation::{HMONITOR, HWND, LPARAM, LRESULT, POINT, RECT},
-    Graphics::Gdi::CreateRoundRectRgn,
+    Foundation::{HWND, LPARAM, LRESULT, POINT, RECT},
+    Graphics::Gdi::*,
     UI::{
         Shell::{Shell_NotifyIconGetRect, NOTIFYICONIDENTIFIER},
         WindowsAndMessaging::*,
@@ -26,7 +26,6 @@ impl NativeWindowBase {
         Self { width, height, radius }
     }
 
-    /// Applies the shared rounded frameless shape.
     pub unsafe fn apply_rounding(self, hwnd: HWND) {
         let region = CreateRoundRectRgn(
             0,
@@ -41,9 +40,6 @@ impl NativeWindowBase {
         }
     }
 
-    /// Native drag behavior for frameless windows. Application code only
-    /// declares which client-space points are interactive; every other point
-    /// becomes HTCAPTION and is draggable using the standard Windows mover.
     pub unsafe fn drag_hit_test(
         self,
         hwnd: HWND,
@@ -66,8 +62,6 @@ impl NativeWindowBase {
         })
     }
 
-    /// Centers a child utility window over its owner and clamps it to the
-    /// owner's monitor work area.
     pub unsafe fn centered_on_owner(self, owner: HWND, gap: i32) -> (i32, i32) {
         let mut owner_rect: RECT = zeroed();
         let owner_valid = !owner.is_null()
@@ -101,10 +95,8 @@ impl NativeWindowBase {
         (x, y)
     }
 
-    /// GahYar-compatible tray-click placement: use the mouse position at the
-    /// exact moment the tray icon is clicked, center horizontally on it, and
-    /// place the popup immediately above the bottom edge of the monitor work
-    /// area. This intentionally mirrors GahYar instead of guessing a corner.
+    /// GahYar-compatible tray-click placement. At WM_TRAY time the cursor is
+    /// over the tray icon, so use that exact X and the bottom work-area edge.
     pub unsafe fn above_taskbar_at_cursor(self, gap: i32) -> (i32, i32) {
         let mut cursor: POINT = zeroed();
         if GetCursorPos(&mut cursor) == 0 {
@@ -127,9 +119,8 @@ impl NativeWindowBase {
         (x, y)
     }
 
-    /// Hotkey fallback when no text caret can be resolved. Unlike the tray
-    /// click path this does not depend on where the mouse currently is: it asks
-    /// Explorer for the actual notification-icon rectangle.
+    /// Hotkey fallback when no caret is available. This asks Explorer for the
+    /// notification icon rectangle instead of depending on the mouse position.
     pub unsafe fn above_tray_icon(self, hwnd: HWND, icon_id: u32, gap: i32) -> Option<(i32, i32)> {
         let mut identifier: NOTIFYICONIDENTIFIER = zeroed();
         identifier.cbSize = size_of::<NOTIFYICONIDENTIFIER>() as u32;
@@ -153,8 +144,6 @@ impl NativeWindowBase {
         Some((x, y))
     }
 
-    /// Places a popup near an anchor such as a text caret and keeps it inside
-    /// the monitor work area.
     pub unsafe fn near_anchor(self, anchor: POINT, gap: i32) -> (i32, i32) {
         let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
         let work = monitor_work_area(monitor).unwrap_or(RECT {
