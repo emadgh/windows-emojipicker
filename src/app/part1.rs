@@ -229,7 +229,7 @@ unsafe extern "system" fn wnd_proc(
                 CMD_ABOUT => about::show(hwnd, WM_REQUEST_UPDATE),
                 CMD_UPDATE => request_manual_update(hwnd),
                 CMD_THEME => toggle_theme(hwnd),
-                CMD_EXIT => DestroyWindow(hwnd),
+                CMD_EXIT => { DestroyWindow(hwnd); }
                 _ => {}
             }
             return 0;
