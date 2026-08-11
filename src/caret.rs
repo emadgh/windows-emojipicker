@@ -1,7 +1,6 @@
 use std::mem::size_of;
 
 use windows::Win32::{
-    Foundation::BOOL,
     System::{
         Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED},
         Ole::SafeArrayDestroy,
@@ -26,7 +25,7 @@ pub fn focused_caret_point() -> Option<(i32, i32)> {
         let pattern: IUIAutomationTextPattern2 =
             focused.GetCurrentPatternAs(UIA_TextPattern2Id).ok()?;
 
-        let mut active = BOOL(0);
+        let mut active = Default::default();
         let range = pattern.GetCaretRange(&mut active).ok()?;
         if !active.as_bool() {
             return None;
