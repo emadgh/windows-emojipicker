@@ -1,118 +1,321 @@
-fn preview_text(item: PickerItem) -> String {
-    if matches!(item.kind, ItemKind::Ascii) {
-        item.content
-            .lines()
-            .next()
-            .unwrap_or(item.content)
-            .to_string()
-    } else {
-        item.content.replace('\r', "").replace('\n', " ↵ ")
-    }
-}
-
-unsafe fn fill(hdc: HDC, rect: &RECT, color: COLORREF) {
-    let brush = CreateSolidBrush(color);
-    if !brush.is_null() {
-        FillRect(hdc, rect, brush);
-        DeleteObject(brush as _);
-    }
-}
-
-unsafe fn draw_text(
-    hdc: HDC,
-    font: HFONT,
-    text: &str,
-    rect: &mut RECT,
-    format: u32,
-    color: COLORREF,
-) {
-    if font.is_null() {
-        return;
-    }
-    let old = SelectObject(hdc, font as _);
-    SetTextColor(hdc, color);
-    let mut buffer: Vec<u16> = text.encode_utf16().collect();
-    DrawTextW(
-        hdc,
-        buffer.as_mut_ptr(),
-        buffer.len() as i32,
-        rect,
-        format,
-    );
-    if !old.is_null() {
-        SelectObject(hdc, old);
-    }
-}
-
-unsafe fn add_tray_icon(hwnd: HWND) -> bool {
-    let mut data: NOTIFYICONDATAW = zeroed();
-    data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
-    data.hWnd = hwnd;
-    data.uID = TRAY_ICON_ID;
-    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-    data.uCallbackMessage = WM_TRAY;
-    data.hIcon = LoadIconW(null_mut(), IDI_APPLICATION);
-    copy_wide_fixed("Windows Emoji Picker", &mut data.szTip);
-
-    Shell_NotifyIconW(NIM_ADD, &data) != 0
-}
-
-unsafe fn remove_tray_icon(hwnd: HWND) {
-    let mut data: NOTIFYICONDATAW = zeroed();
-    data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
-    data.hWnd = hwnd;
-    data.uID = TRAY_ICON_ID;
-    Shell_NotifyIconW(NIM_DELETE, &data);
-}
-
-unsafe fn show_tray_menu(hwnd: HWND) {
-    let menu = CreatePopupMenu();
-    if menu.is_null() {
+unsafe fn paint(hwnd: HWND) {
+    let mut ps: PAINTSTRUCT = zeroed();
+    let hdc = BeginPaint(hwnd, &mut ps);
+    if hdc.is_null() {
         return;
     }
 
-    let open = wide("Open picker\tWin+Shift+.");
-    let exit = wide("Exit");
-    AppendMenuW(menu, MF_STRING, CMD_OPEN, open.as_ptr());
-    AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    AppendMenuW(menu, MF_STRING, CMD_EXIT, exit.as_ptr());
+    let mut client: RECT = zeroed();
+    GetClientRect(hwnd, &mut client);
 
-    let mut point: POINT = zeroed();
-    GetCursorPos(&mut point);
-    SetForegroundWindow(hwnd);
-    TrackPopupMenu(
-        menu,
-        TPM_RIGHTBUTTON,
-        point.x,
-        point.y,
+    fill(hdc, &client, rgb(27, 27, 30));
+
+    let normal_face = wide("Segoe UI");
+    let emoji_face = wide("Segoe UI Emoji");
+    let normal_font = CreateFontW(
+        -16,
         0,
-        hwnd,
-        null(),
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        5,
+        0,
+        normal_face.as_ptr(),
     );
-    DestroyMenu(menu);
-}
+    let small_font = CreateFontW(
+        -14,
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        5,
+        0,
+        normal_face.as_ptr(),
+    );
+    let content_font = CreateFontW(
+        -27,
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        5,
+        0,
+        emoji_face.as_ptr(),
+    );
 
-fn copy_wide_fixed<const N: usize>(text: &str, output: &mut [u16; N]) {
-    output.fill(0);
-    for (dst, src) in output
-        .iter_mut()
-        .take(N.saturating_sub(1))
-        .zip(text.encode_utf16())
-    {
-        *dst = src;
+    SetBkMode(hdc, 1);
+
+    // Search field.
+    let search_rect = RECT {
+        left: PAD,
+        top: SEARCH_Y,
+        right: POPUP_W - PAD,
+        bottom: SEARCH_Y + SEARCH_H,
+    };
+    fill(hdc, &search_rect, rgb(42, 42, 46));
+
+    let query = STATE.with(|cell| String::from_utf16_lossy(&cell.borrow().query_utf16));
+    let mut text_rect = RECT {
+        left: search_rect.left + 14,
+        top: search_rect.top,
+        right: search_rect.right - 12,
+        bottom: search_rect.bottom,
+    };
+    if query.is_empty() {
+        draw_text(
+            hdc,
+            normal_font,
+            "Search emoji, kaomoji, ASCII, text...",
+            &mut text_rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+            rgb(145, 145, 153),
+        );
+    } else {
+        draw_text(
+            hdc,
+            normal_font,
+            &query,
+            &mut text_rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+            rgb(241, 241, 244),
+        );
     }
+
+    let (category_index, selected, scroll, hovered, filtered_count, layout, visible_items) =
+        STATE.with(|cell| {
+            let state = cell.borrow();
+            let layout = grid_layout(&state);
+            let visible_items = state
+                .filtered
+                .iter()
+                .skip(state.scroll)
+                .take(layout.cols * layout.rows)
+                .copied()
+                .collect::<Vec<_>>();
+            (
+                state.category_index,
+                state.selected,
+                state.scroll,
+                state.hovered,
+                state.filtered.len(),
+                layout,
+                visible_items,
+            )
+        });
+
+    // Category tabs.
+    let tab_width = (POPUP_W - PAD * 2) / ItemKind::ALL.len() as i32;
+    for index in 0..ItemKind::ALL.len() {
+        let left = PAD + tab_width * index as i32;
+        let right = if index + 1 == ItemKind::ALL.len() {
+            POPUP_W - PAD
+        } else {
+            left + tab_width - 2
+        };
+        let tab = RECT {
+            left,
+            top: TABS_Y,
+            right,
+            bottom: TABS_Y + TABS_H,
+        };
+        fill(
+            hdc,
+            &tab,
+            if index == category_index {
+                rgb(64, 94, 159)
+            } else {
+                rgb(35, 35, 39)
+            },
+        );
+
+        let label = match ItemKind::ALL[index] {
+            None => "All",
+            Some(kind) => kind.label(),
+        };
+        let mut label_rect = tab;
+        draw_text(
+            hdc,
+            small_font,
+            label,
+            &mut label_rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+            if index == category_index {
+                rgb(255, 255, 255)
+            } else {
+                rgb(190, 190, 198)
+            },
+        );
+    }
+
+    // Grid. Emoji cells are intentionally icon-only; names remain searchable
+    // metadata and are not drawn under the glyph.
+    let cell_w = card_width(layout);
+    let catalog = items();
+    let mut emoji_draws = Vec::<EmojiDraw<'_>>::new();
+    let mut emoji_fallbacks = Vec::<(&str, RECT)>::new();
+
+    for (slot, item_index) in visible_items.iter().copied().enumerate() {
+        let position = scroll + slot;
+        let item = catalog[item_index];
+        let row = slot / layout.cols;
+        let col = slot % layout.cols;
+        let x = PAD + col as i32 * (cell_w + layout.gap);
+        let y = CONTENT_TOP + row as i32 * (layout.card_h + layout.gap);
+        let card = RECT {
+            left: x,
+            top: y,
+            right: x + cell_w,
+            bottom: y + layout.card_h,
+        };
+
+        let is_selected = position == selected;
+        let is_hovered = hovered == Some(position);
+        let color = if is_selected {
+            rgb(65, 78, 108)
+        } else if is_hovered {
+            rgb(51, 51, 57)
+        } else {
+            rgb(37, 37, 41)
+        };
+        fill(hdc, &card, color);
+
+        if item.kind == ItemKind::Emoji {
+            let glyph_rect = RECT {
+                left: card.left + 2,
+                top: card.top + 1,
+                right: card.right - 2,
+                bottom: card.bottom - 1,
+            };
+            emoji_draws.push(EmojiDraw {
+                text: item.content,
+                left: glyph_rect.left,
+                top: glyph_rect.top,
+                right: glyph_rect.right,
+                bottom: glyph_rect.bottom,
+            });
+            emoji_fallbacks.push((item.content, glyph_rect));
+            continue;
+        }
+
+        let show_title = !layout.emoji_dense;
+        let mut content_rect = if show_title {
+            RECT {
+                left: card.left + 8,
+                top: card.top + 5,
+                right: card.right - 8,
+                bottom: card.top + 39,
+            }
+        } else {
+            RECT {
+                left: card.left + 5,
+                top: card.top + 3,
+                right: card.right - 5,
+                bottom: card.bottom - 3,
+            }
+        };
+        let preview = preview_text(item);
+        let is_symbol = item.kind == ItemKind::Symbol;
+        draw_text(
+            hdc,
+            if is_symbol { content_font } else { normal_font },
+            &preview,
+            &mut content_rect,
+            if is_symbol {
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS
+            } else {
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS
+            },
+            rgb(245, 245, 247),
+        );
+
+        if show_title {
+            let mut title_rect = RECT {
+                left: card.left + 8,
+                top: card.top + 39,
+                right: card.right - 8,
+                bottom: card.bottom - 4,
+            };
+            draw_text(
+                hdc,
+                small_font,
+                item.title,
+                &mut title_rect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                rgb(158, 158, 168),
+            );
+        }
+    }
+
+    let footer_rect = RECT {
+        left: PAD,
+        top: FOOTER_Y,
+        right: POPUP_W - PAD,
+        bottom: FOOTER_Y + FOOTER_H,
+    };
+    let status = if filtered_count == 0 {
+        "No results".to_string()
+    } else {
+        format!("{} results  •  Enter: insert  •  Esc: close", filtered_count)
+    };
+    let mut footer_text = footer_rect;
+    draw_text(
+        hdc,
+        small_font,
+        &status,
+        &mut footer_text,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+        rgb(125, 125, 134),
+    );
+
+    // Direct2D/DirectWrite color-font overlay. If initialization or drawing is
+    // unavailable, fall back to the old monochrome GDI path.
+    let color_ok = renderer::draw_color_emojis(
+        hdc as *mut std::ffi::c_void,
+        POPUP_W,
+        POPUP_H,
+         &emoji_draws,
+    );
+    if !color_ok {
+        for (text, mut rect) in emoji_fallbacks {
+            draw_text(
+                hdc,
+                content_font,
+                text,
+                &mut rect,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                rgb(245, 245, 247),
+            );
+        }
+    }
+
+    if !normal_font.is_null() {
+        DeleteObject(normal_font as _);
+    }
+    if !small_font.is_null() {
+        DeleteObject(small_font as _);
+    }
+    if !content_font.is_null() {
+        DeleteObject(content_font as _);
+    }
+
+    EndPaint(hwnd, &ps);
 }
 
-fn wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-fn point_from_lparam(lparam: LPARAM) -> (i32, i32) {
-    let x = (lparam as u32 & 0xffff) as u16 as i16 as i32;
-    let y = ((lparam as u32 >> 16) & 0xffff) as u16 as i16 as i32;
-    (x, y)
-}
-
-const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
-    r as u32 | ((g as u32) << 8) | ((b as u32) << 16)
-}

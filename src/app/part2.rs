@@ -1,121 +1,3 @@
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    match msg {
-        WM_HOTKEY if wparam == HOTKEY_ID as usize => {
-            open_picker(hwnd);
-            return 0;
-        }
-        WM_TRAY => {
-            match lparam as u32 {
-                WM_LBUTTONUP | WM_LBUTTONDBLCLK => open_picker(hwnd),
-                WM_RBUTTONUP | WM_CONTEXTMENU => show_tray_menu(hwnd),
-                _ => {}
-            }
-            return 0;
-        }
-        WM_COMMAND => {
-            match wparam & 0xffff {
-                CMD_OPEN => open_picker(hwnd),
-                CMD_EXIT => {
-                    DestroyWindow(hwnd);
-                }
-                _ => {}
-            }
-            return 0;
-        }
-        WM_ACTIVATE => {
-            if (wparam & 0xffff) as u32 == WA_INACTIVE {
-                ShowWindow(hwnd, SW_HIDE);
-            }
-            return 0;
-        }
-        WM_KEYDOWN => {
-            if handle_keydown(hwnd, wparam) {
-                return 0;
-            }
-        }
-        WM_CHAR => {
-            if handle_char(hwnd, wparam) {
-                return 0;
-            }
-        }
-        WM_MOUSEMOVE => {
-            let (x, y) = point_from_lparam(lparam);
-            let changed = STATE.with(|cell| {
-                let mut state = cell.borrow_mut();
-                let new_hover = hit_test_item(x, y, &state);
-                if state.hovered != new_hover {
-                    state.hovered = new_hover;
-                    true
-                } else {
-                    false
-                }
-            });
-            if changed {
-                InvalidateRect(hwnd, null(), 0);
-            }
-            return 0;
-        }
-        WM_LBUTTONUP => {
-            let (x, y) = point_from_lparam(lparam);
-            if hit_test_category(hwnd, x, y) {
-                return 0;
-            }
-
-            let clicked = STATE.with(|cell| {
-                let mut state = cell.borrow_mut();
-                let hit = hit_test_item(x, y, &state);
-                if let Some(position) = hit {
-                    state.selected = position;
-                }
-                hit.is_some()
-            });
-
-            if clicked {
-                insert_selected(hwnd);
-            }
-            return 0;
-        }
-        WM_MOUSEWHEEL => {
-            let delta = ((wparam >> 16) & 0xffff) as u16 as i16;
-            STATE.with(|cell| {
-                let mut state = cell.borrow_mut();
-                let count = filtered_indices(&state).len();
-                let max_scroll = max_scroll(count);
-                if delta < 0 {
-                    state.scroll = (state.scroll + COLS).min(max_scroll);
-                } else {
-                    state.scroll = state.scroll.saturating_sub(COLS);
-                }
-            });
-            InvalidateRect(hwnd, null(), 0);
-            return 0;
-        }
-        WM_PAINT => {
-            paint(hwnd);
-            return 0;
-        }
-        WM_ERASEBKGND => return 1,
-        WM_CLOSE => {
-            ShowWindow(hwnd, SW_HIDE);
-            return 0;
-        }
-        WM_DESTROY => {
-            remove_tray_icon(hwnd);
-            UnregisterHotKey(hwnd, HOTKEY_ID);
-            PostQuitMessage(0);
-            return 0;
-        }
-        _ => {}
-    }
-
-    DefWindowProcW(hwnd, msg, wparam, lparam)
-}
-
 unsafe fn open_picker(hwnd: HWND) {
     let target = GetForegroundWindow();
     let anchor = caret_or_cursor_position(target);
@@ -130,6 +12,7 @@ unsafe fn open_picker(hwnd: HWND) {
         state.selected = 0;
         state.scroll = 0;
         state.hovered = None;
+        rebuild_filter(&mut state);
     });
 
     SetWindowPos(
@@ -204,5 +87,96 @@ unsafe fn popup_position(anchor: POINT) -> (i32, i32) {
     }
 
     (x, y)
+}
+
+unsafe fn handle_keydown(hwnd: HWND, wparam: WPARAM) -> bool {
+    let key = wparam as u16;
+
+    match key {
+        VK_ESCAPE => {
+            ShowWindow(hwnd, SW_HIDE);
+            true
+        }
+        VK_RETURN => {
+            insert_selected(hwnd);
+            true
+        }
+        VK_TAB => {
+            STATE.with(|cell| {
+                let mut state = cell.borrow_mut();
+                state.category_index = (state.category_index + 1) % ItemKind::ALL.len();
+                state.selected = 0;
+                state.scroll = 0;
+                state.hovered = None;
+                rebuild_filter(&mut state);
+            });
+            InvalidateRect(hwnd, null(), 0);
+            true
+        }
+        VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_HOME | VK_END => {
+            STATE.with(|cell| {
+                let mut state = cell.borrow_mut();
+                let count = state.filtered.len();
+                if count == 0 {
+                    state.selected = 0;
+                    state.scroll = 0;
+                    return;
+                }
+
+                let layout = grid_layout(&state);
+                state.selected = state.selected.min(count - 1);
+                match key {
+                    VK_LEFT => state.selected = state.selected.saturating_sub(1),
+                    VK_RIGHT => state.selected = (state.selected + 1).min(count - 1),
+                    VK_UP => state.selected = state.selected.saturating_sub(layout.cols),
+                    VK_DOWN => state.selected = (state.selected + layout.cols).min(count - 1),
+                    VK_HOME => state.selected = 0,
+                    VK_END => state.selected = count - 1,
+                    _ => {}
+                }
+                ensure_selected_visible(&mut state, count);
+            });
+            InvalidateRect(hwnd, null(), 0);
+            true
+        }
+        _ => false,
+    }
+}
+
+unsafe fn handle_char(hwnd: HWND, wparam: WPARAM) -> bool {
+    let unit = wparam as u16;
+
+    match unit {
+        0x08 => {
+            STATE.with(|cell| pop_utf16_scalar(&mut cell.borrow_mut().query_utf16));
+        }
+        0x09 | 0x0d | 0x1b => return true,
+        0x20..=0xffff => {
+            STATE.with(|cell| cell.borrow_mut().query_utf16.push(unit));
+        }
+        _ => return false,
+    }
+
+    STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.selected = 0;
+        state.scroll = 0;
+        state.hovered = None;
+        rebuild_filter(&mut state);
+    });
+    InvalidateRect(hwnd, null(), 0);
+    true
+}
+
+fn pop_utf16_scalar(value: &mut Vec<u16>) {
+    if let Some(last) = value.pop() {
+        if (0xdc00..=0xdfff).contains(&last) {
+            if let Some(previous) = value.last() {
+                if (0xd800..=0xdbff).contains(previous) {
+                    value.pop();
+                }
+            }
+        }
+    }
 }
 

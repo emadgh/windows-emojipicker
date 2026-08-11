@@ -1,58 +1,76 @@
+use std::{collections::HashSet, sync::OnceLock};
+
 use crate::model::{ItemKind, PickerItem};
 
-pub static ITEMS: &[PickerItem] = &[
-    // Emoji
-    PickerItem { kind: ItemKind::Emoji, title: "Grinning", content: "😀", keywords: "grin happy smile خنده لبخند" },
-    PickerItem { kind: ItemKind::Emoji, title: "Smiley", content: "😃", keywords: "happy smile joy خوشحال لبخند" },
-    PickerItem { kind: ItemKind::Emoji, title: "Smile", content: "😄", keywords: "happy smile joy خنده" },
-    PickerItem { kind: ItemKind::Emoji, title: "Beaming", content: "😁", keywords: "teeth happy grin دندان خنده" },
-    PickerItem { kind: ItemKind::Emoji, title: "Laughing", content: "😆", keywords: "laugh happy خنده" },
-    PickerItem { kind: ItemKind::Emoji, title: "Sweat smile", content: "😅", keywords: "sweat smile nervous عرق لبخند" },
-    PickerItem { kind: ItemKind::Emoji, title: "Tears of joy", content: "😂", keywords: "laugh cry joy tears خنده گریه" },
-    PickerItem { kind: ItemKind::Emoji, title: "Rolling laugh", content: "🤣", keywords: "rofl laugh خنده" },
-    PickerItem { kind: ItemKind::Emoji, title: "Warm smile", content: "😊", keywords: "smile blush happy لبخند" },
-    PickerItem { kind: ItemKind::Emoji, title: "Halo", content: "😇", keywords: "angel innocent halo فرشته" },
-    PickerItem { kind: ItemKind::Emoji, title: "Wink", content: "😉", keywords: "wink playful چشمک" },
-    PickerItem { kind: ItemKind::Emoji, title: "Heart eyes", content: "😍", keywords: "love heart eyes عشق قلب" },
-    PickerItem { kind: ItemKind::Emoji, title: "Hearts", content: "🥰", keywords: "love hearts affection عشق قلب" },
-    PickerItem { kind: ItemKind::Emoji, title: "Kiss", content: "😘", keywords: "kiss love بوس عشق" },
-    PickerItem { kind: ItemKind::Emoji, title: "Cool", content: "😎", keywords: "sunglasses cool عینک" },
-    PickerItem { kind: ItemKind::Emoji, title: "Thinking", content: "🤔", keywords: "think hmm فکر" },
-    PickerItem { kind: ItemKind::Emoji, title: "Neutral", content: "😐", keywords: "neutral blank بی تفاوت" },
-    PickerItem { kind: ItemKind::Emoji, title: "Unamused", content: "😒", keywords: "unamused annoyed ناراحت" },
-    PickerItem { kind: ItemKind::Emoji, title: "Sad", content: "😢", keywords: "sad cry tear غم گریه" },
-    PickerItem { kind: ItemKind::Emoji, title: "Crying", content: "😭", keywords: "cry sob sad گریه غم" },
-    PickerItem { kind: ItemKind::Emoji, title: "Angry", content: "😠", keywords: "angry mad عصبانی" },
-    PickerItem { kind: ItemKind::Emoji, title: "Rage", content: "😡", keywords: "rage angry عصبانی خشم" },
-    PickerItem { kind: ItemKind::Emoji, title: "Surprised", content: "😮", keywords: "surprise wow تعجب" },
-    PickerItem { kind: ItemKind::Emoji, title: "Party", content: "🥳", keywords: "party birthday celebrate جشن تولد" },
-    PickerItem { kind: ItemKind::Emoji, title: "Thumbs up", content: "👍", keywords: "thumb up yes like تایید لایک" },
-    PickerItem { kind: ItemKind::Emoji, title: "Thumbs down", content: "👎", keywords: "thumb down no dislike رد" },
-    PickerItem { kind: ItemKind::Emoji, title: "OK", content: "👌", keywords: "ok hand تایید" },
-    PickerItem { kind: ItemKind::Emoji, title: "Clap", content: "👏", keywords: "clap applause تشویق" },
-    PickerItem { kind: ItemKind::Emoji, title: "Hands", content: "🙏", keywords: "please pray thanks تشکر دعا" },
-    PickerItem { kind: ItemKind::Emoji, title: "Wave", content: "👋", keywords: "wave hello bye سلام خداحافظ" },
-    PickerItem { kind: ItemKind::Emoji, title: "Flex", content: "💪", keywords: "strong muscle قدرت" },
-    PickerItem { kind: ItemKind::Emoji, title: "Eyes", content: "👀", keywords: "eyes look دیدن چشم" },
-    PickerItem { kind: ItemKind::Emoji, title: "Red heart", content: "❤️", keywords: "heart love red قلب عشق" },
-    PickerItem { kind: ItemKind::Emoji, title: "Broken heart", content: "💔", keywords: "heart broken sad قلب شکسته" },
-    PickerItem { kind: ItemKind::Emoji, title: "Fire", content: "🔥", keywords: "fire hot lit آتش" },
-    PickerItem { kind: ItemKind::Emoji, title: "Sparkles", content: "✨", keywords: "sparkle shine ستاره درخشش" },
-    PickerItem { kind: ItemKind::Emoji, title: "Star", content: "⭐", keywords: "star favorite ستاره" },
-    PickerItem { kind: ItemKind::Emoji, title: "Check", content: "✅", keywords: "check done yes تایید انجام" },
-    PickerItem { kind: ItemKind::Emoji, title: "Cross", content: "❌", keywords: "cross no error خطا رد" },
-    PickerItem { kind: ItemKind::Emoji, title: "Warning", content: "⚠️", keywords: "warning alert هشدار" },
-    PickerItem { kind: ItemKind::Emoji, title: "Rocket", content: "🚀", keywords: "rocket launch fast موشک" },
-    PickerItem { kind: ItemKind::Emoji, title: "Bulb", content: "💡", keywords: "idea bulb light ایده" },
-    PickerItem { kind: ItemKind::Emoji, title: "Pin", content: "📌", keywords: "pin location note سنجاق" },
-    PickerItem { kind: ItemKind::Emoji, title: "Calendar", content: "📅", keywords: "calendar date تقویم تاریخ" },
-    PickerItem { kind: ItemKind::Emoji, title: "Phone", content: "📱", keywords: "phone mobile موبایل" },
-    PickerItem { kind: ItemKind::Emoji, title: "Computer", content: "💻", keywords: "laptop computer code لپتاپ" },
-    PickerItem { kind: ItemKind::Emoji, title: "Coffee", content: "☕", keywords: "coffee drink قهوه" },
-    PickerItem { kind: ItemKind::Emoji, title: "Gift", content: "🎁", keywords: "gift present هدیه" },
-    PickerItem { kind: ItemKind::Emoji, title: "Birthday", content: "🎂", keywords: "cake birthday تولد کیک" },
-    PickerItem { kind: ItemKind::Emoji, title: "Iran", content: "🇮🇷", keywords: "iran flag ایران پرچم" },
+static CATALOG: OnceLock<Vec<PickerItem>> = OnceLock::new();
 
+/// Returns the complete in-memory picker catalog.
+///
+/// Emoji data is generated by the `emojis` crate from Unicode Emoji 17.0 data.
+/// We include the base RGI set plus every skin-tone sequence exposed by the
+/// Unicode dataset, while preserving the crate's CLDR/Unicode ordering.
+pub fn items() -> &'static [PickerItem] {
+    CATALOG.get_or_init(build_catalog).as_slice()
+}
+
+fn build_catalog() -> Vec<PickerItem> {
+    let mut out = Vec::with_capacity(4500 + OTHER_ITEMS.len());
+    let mut seen = HashSet::<&'static str>::with_capacity(4500);
+
+    for emoji in emojis::iter() {
+        push_emoji(&mut out, &mut seen, emoji);
+        if let Some(tones) = emoji.skin_tones() {
+            for toned in tones {
+                push_emoji(&mut out, &mut seen, toned);
+            }
+        }
+    }
+
+    out.extend_from_slice(OTHER_ITEMS);
+    out
+}
+
+fn push_emoji(
+    out: &mut Vec<PickerItem>,
+    seen: &mut HashSet<&'static str>,
+    emoji: &'static emojis::Emoji,
+) {
+    let content = emoji.as_str();
+    if !seen.insert(content) {
+        return;
+    }
+
+    out.push(PickerItem {
+        kind: ItemKind::Emoji,
+        title: emoji.name(),
+        content,
+        keywords: emoji_aliases(content),
+    });
+}
+
+fn emoji_aliases(content: &str) -> &'static str {
+    match content {
+        "😀" | "😃" | "😄" | "😁" | "😆" | "😂" | "🤣" => "خنده لبخند خوشحال",
+        "😊" | "🙂" => "لبخند خوشحال",
+        "😍" | "🥰" | "❤️" | "❤" => "عشق قلب دوست داشتن",
+        "😘" => "بوس عشق",
+        "😢" | "😭" => "گریه غم ناراحت",
+        "😠" | "😡" | "🤬" => "عصبانی خشم",
+        "🤔" => "فکر تفکر",
+        "👋" => "سلام خداحافظ دست",
+        "👍" => "لایک تایید بله",
+        "👎" => "دیسلایک رد نه",
+        "🙏" => "تشکر ممنون دعا لطفا",
+        "🔥" => "آتش داغ",
+        "✅" => "تایید انجام درست",
+        "❌" => "خطا رد اشتباه",
+        "⚠️" => "هشدار اخطار",
+        "🇮🇷" => "ایران پرچم",
+        _ => "",
+    }
+}
+
+pub static OTHER_ITEMS: &[PickerItem] = &[
     // Kaomoji
     PickerItem { kind: ItemKind::Kaomoji, title: "Shrug", content: r#"¯\_(ツ)_/¯"#, keywords: "shrug whatever شانه" },
     PickerItem { kind: ItemKind::Kaomoji, title: "Table flip", content: "(╯°□°)╯︵ ┻━┻", keywords: "table flip angry میز خشم" },

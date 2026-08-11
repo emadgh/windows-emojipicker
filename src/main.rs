@@ -2,6 +2,7 @@
 
 mod data;
 mod model;
+mod renderer;
 
 #[cfg(target_os = "windows")]
 mod app;
