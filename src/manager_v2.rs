@@ -9,8 +9,8 @@ use windows_sys::Win32::{
     Graphics::Gdi::*,
     System::LibraryLoader::GetModuleHandleW,
     UI::{
-        Controls::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE},
+        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::*,
     },
 };
@@ -235,7 +235,12 @@ pub unsafe fn show(owner: HWND, changed_message: u32) {
         WS_EX_CLIENTEDGE,
         edit_class.as_ptr(),
         empty.as_ptr(),
-        WS_CHILD | WS_VISIBLE | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_WANTRETURN as u32 | WS_VSCROLL,
+        WS_CHILD
+            | WS_VISIBLE
+            | ES_MULTILINE as u32
+            | ES_AUTOVSCROLL as u32
+            | ES_WANTRETURN as u32
+            | WS_VSCROLL,
         0,
         0,
         10,
@@ -315,11 +320,18 @@ pub unsafe fn invalidate() {
     }
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match msg {
         WM_NCHITTEST => {
             if let Some(base) = NativeWindowBase::from_client(hwnd, RADIUS) {
-                if let Some(hit) = base.drag_hit_test(hwnd, lparam, |x, y| manager_point_is_interactive(hwnd, x, y)) {
+                if let Some(hit) = base.drag_hit_test(hwnd, lparam, |x, y| {
+                    manager_point_is_interactive(hwnd, x, y)
+                }) {
                     return hit;
                 }
             }
