@@ -20,3 +20,11 @@ jobs:
 
       - name: Release build
         run: cargo build --release
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-emojipicker-windows-x64
+          path: target/release/windows-emojipicker.exe
+          if-no-files-found: error
+          retention-days: 30
