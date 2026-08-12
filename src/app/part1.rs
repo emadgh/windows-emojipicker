@@ -30,6 +30,7 @@ use crate::{
     manager,
     model::ItemKind,
     native_window::NativeWindowBase,
+    preview,
     renderer::{self, EmojiDraw},
     settings,
     theme::Palette,
@@ -229,6 +230,7 @@ unsafe extern "system" fn wnd_proc(
     match msg {
         WM_HOTKEY if wparam == HOTKEY_ID as usize => {
             if IsWindowVisible(hwnd) != 0 {
+                preview::hide();
                 ShowWindow(hwnd, SW_HIDE);
             } else {
                 open_picker(hwnd, OpenOrigin::Hotkey);
@@ -260,6 +262,7 @@ unsafe extern "system" fn wnd_proc(
             if (wparam & 0xffff) as u32 == WA_INACTIVE
                 && !SUPPRESS_DEACTIVATE.load(Ordering::SeqCst)
             {
+                preview::hide();
                 ShowWindow(hwnd, SW_HIDE);
             }
             return 0;
@@ -272,6 +275,9 @@ unsafe extern "system" fn wnd_proc(
                 state.hovered = None;
                 rebuild_filter(&mut state);
             });
+            if preview::is_visible() {
+                sync_preview_selected(hwnd);
+            }
             InvalidateRect(hwnd, null(), 0);
             return 0;
         }
@@ -303,10 +309,22 @@ unsafe extern "system" fn wnd_proc(
             return 0;
         }
         WM_KEYDOWN => {
-            if handle_keydown(hwnd, wparam) { return 0; }
+            if handle_keydown(hwnd, wparam) {
+                if IsWindowVisible(hwnd) != 0 {
+                    sync_preview_selected(hwnd);
+                } else {
+                    preview::hide();
+                }
+                return 0;
+            }
         }
         WM_CHAR => {
-            if handle_char(hwnd, wparam) { return 0; }
+            if handle_char(hwnd, wparam) {
+                if preview::is_visible() {
+                    sync_preview_selected(hwnd);
+                }
+                return 0;
+            }
         }
         WM_NCHITTEST => {
             if let Some(hit) = WINDOW_BASE.drag_hit_test(hwnd, lparam, |x, y| !is_draggable_background(x, y)) {
@@ -323,7 +341,22 @@ unsafe extern "system" fn wnd_proc(
                     true
                 } else { false }
             });
-            if changed { InvalidateRect(hwnd, null(), 0); }
+            if changed {
+                InvalidateRect(hwnd, null(), 0);
+                if preview::is_visible() {
+                    sync_preview_hover(hwnd);
+                }
+            }
+            return 0;
+        }
+        WM_RBUTTONUP => {
+            let (x, y) = point_from_lparam(lparam);
+            if let Some((kind, title, content)) = preview_select_at_client(x, y) {
+                InvalidateRect(hwnd, null(), 0);
+                preview::show(hwnd, kind, &title, &content);
+            } else {
+                preview::hide();
+            }
             return 0;
         }
         WM_LBUTTONUP => {
@@ -336,7 +369,12 @@ unsafe extern "system" fn wnd_proc(
                 if let Some(position) = hit { state.selected = position; }
                 hit.is_some()
             });
-            if clicked { insert_selected(hwnd); }
+            if clicked {
+                if preview::is_visible() {
+                    sync_preview_selected(hwnd);
+                }
+                insert_selected(hwnd);
+            }
             return 0;
         }
         WM_MOUSEWHEEL => {
@@ -350,13 +388,23 @@ unsafe extern "system" fn wnd_proc(
                 else { state.scroll = state.scroll.saturating_sub(layout.cols); }
                 old != state.scroll
             });
-            if changed { InvalidateRect(hwnd, null(), 0); }
+            if changed {
+                InvalidateRect(hwnd, null(), 0);
+                if preview::is_visible() {
+                    sync_preview_selected(hwnd);
+                }
+            }
             return 0;
         }
         WM_PAINT => { paint(hwnd); return 0; }
         WM_ERASEBKGND => return 1,
-        WM_CLOSE => { ShowWindow(hwnd, SW_HIDE); return 0; }
+        WM_CLOSE => {
+            preview::hide();
+            ShowWindow(hwnd, SW_HIDE);
+            return 0;
+        }
         WM_DESTROY => {
+            preview::shutdown();
             KillTimer(hwnd, UPDATE_CHECK_TIMER_ID);
             remove_tray_icon(hwnd);
             UnregisterHotKey(hwnd, HOTKEY_ID);
@@ -367,6 +415,23 @@ unsafe extern "system" fn wnd_proc(
     }
 
     DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+unsafe fn sync_preview_hover(hwnd: HWND) {
+    if let Some((kind, title, content)) = preview_hover_payload() {
+        preview::update(hwnd, kind, &title, &content);
+    }
+}
+
+unsafe fn sync_preview_selected(hwnd: HWND) {
+    if !preview::is_visible() {
+        return;
+    }
+    if let Some((kind, title, content)) = preview_selected_payload() {
+        preview::update(hwnd, kind, &title, &content);
+    } else {
+        preview::hide();
+    }
 }
 
 fn is_draggable_background(x: i32, y: i32) -> bool {
@@ -437,4 +502,5 @@ unsafe fn toggle_theme(hwnd: HWND) {
     InvalidateRect(hwnd, null(), 0);
     manager::invalidate();
     about::invalidate();
+    preview::invalidate();
 }
