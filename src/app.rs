@@ -4,3 +4,4 @@ include!("app/part3.rs");
 include!("app/part4.rs");
 include!("app/part5_v2.rs");
 include!("app/part6.rs");
+include!("app/part7_preview.rs");
