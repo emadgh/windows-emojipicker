@@ -309,7 +309,7 @@ fn apply_content(
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
-    _wparam: WPARAM,
+    wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
@@ -341,7 +341,7 @@ unsafe extern "system" fn wnd_proc(
         _ => {}
     }
 
-    DefWindowProcW(hwnd, msg, 0, lparam)
+    DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
 unsafe fn measure_layout(owner: HWND, kind: ItemKind, content: &str) -> PreviewLayout {
