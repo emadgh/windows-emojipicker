@@ -19,13 +19,28 @@ mod manager;
 #[cfg(target_os = "windows")]
 mod native_window;
 #[cfg(target_os = "windows")]
+mod preview;
+#[cfg(target_os = "windows")]
 mod renderer;
 #[cfg(target_os = "windows")]
 mod update;
 
 #[cfg(target_os = "windows")]
 fn main() {
-    if let Err(error) = app::run() {
+    unsafe {
+        // The preview integration observes picker messages after the main wndproc
+        // has updated selection/hover state. It never activates its own window.
+        preview::install_thread_hook();
+    }
+
+    let result = app::run();
+
+    unsafe {
+        preview::shutdown();
+        preview::uninstall_thread_hook();
+    }
+
+    if let Err(error) = result {
         app::show_error(&error);
     }
 }
