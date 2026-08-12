@@ -63,6 +63,46 @@ pub unsafe fn draw_color_emojis(
     })
 }
 
+/// Same color-font path as the picker grid, but with a caller-selected font
+/// size. The preview window uses this to make a single emoji fill its content
+/// without switching back to monochrome GDI.
+pub unsafe fn draw_color_emoji_scaled(
+    raw_hdc: *mut c_void,
+    width: i32,
+    height: i32,
+    text: &str,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    font_size: f32,
+) -> bool {
+    COLOR_RENDERER.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = ColorEmojiRenderer::new().ok();
+        }
+
+        let Some(renderer) = slot.as_ref() else {
+            return false;
+        };
+
+        renderer
+            .draw_scaled(
+                raw_hdc,
+                width,
+                height,
+                text,
+                left,
+                top,
+                right,
+                bottom,
+                font_size,
+            )
+            .is_ok()
+    })
+}
+
 struct ColorEmojiRenderer {
     target: ID2D1DCRenderTarget,
     format: IDWriteTextFormat,
@@ -81,18 +121,7 @@ impl ColorEmojiRenderer {
 
         let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
         let family = preferred_emoji_font(&dwrite);
-        let format = dwrite.CreateTextFormat(
-            PCWSTR(family.as_ptr()),
-            None::<&IDWriteFontCollection>,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            27.0,
-            w!("en-us"),
-        )?;
-        format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
-        format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
-        format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+        let format = create_emoji_format(&dwrite, &family, 27.0)?;
 
         let white = D2D1_COLOR_F {
             r: 1.0,
@@ -116,6 +145,42 @@ impl ColorEmojiRenderer {
         height: i32,
         draws: &[EmojiDraw<'_>],
     ) -> WinResult<()> {
+        self.draw_with_format(raw_hdc, width, height, draws, &self.format)
+    }
+
+    unsafe fn draw_scaled(
+        &self,
+        raw_hdc: *mut c_void,
+        width: i32,
+        height: i32,
+        text: &str,
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+        font_size: f32,
+    ) -> WinResult<()> {
+        let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+        let family = preferred_emoji_font(&dwrite);
+        let format = create_emoji_format(&dwrite, &family, font_size.max(8.0))?;
+        let draw = EmojiDraw {
+            text,
+            left,
+            top,
+            right,
+            bottom,
+        };
+        self.draw_with_format(raw_hdc, width, height, std::slice::from_ref(&draw), &format)
+    }
+
+    unsafe fn draw_with_format(
+        &self,
+        raw_hdc: *mut c_void,
+        width: i32,
+        height: i32,
+        draws: &[EmojiDraw<'_>],
+        format: &IDWriteTextFormat,
+    ) -> WinResult<()> {
         let bounds = RECT {
             left: 0,
             top: 0,
@@ -135,7 +200,7 @@ impl ColorEmojiRenderer {
             };
             self.target.DrawText(
                 &utf16,
-                &self.format,
+                format,
                 &rect,
                 &self.brush,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
@@ -145,6 +210,26 @@ impl ColorEmojiRenderer {
 
         self.target.EndDraw(None, None)
     }
+}
+
+unsafe fn create_emoji_format(
+    factory: &IDWriteFactory,
+    family: &[u16],
+    font_size: f32,
+) -> WinResult<IDWriteTextFormat> {
+    let format = factory.CreateTextFormat(
+        PCWSTR(family.as_ptr()),
+        None::<&IDWriteFontCollection>,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        font_size,
+        w!("en-us"),
+    )?;
+    format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+    format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+    format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+    Ok(format)
 }
 
 unsafe fn preferred_emoji_font(factory: &IDWriteFactory) -> Vec<u16> {
