@@ -2,23 +2,18 @@ use std::{
     cell::RefCell,
     mem::{size_of, zeroed},
     ptr::{null, null_mut},
-    sync::atomic::{AtomicIsize, Ordering},
 };
 
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
-    System::{
-        LibraryLoader::GetModuleHandleW,
-        Threading::GetCurrentThreadId,
-    },
+    System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::*,
 };
 
 use crate::{
-    app,
     model::ItemKind,
-    native_window::{point_from_lparam, NativeWindowBase},
+    native_window::NativeWindowBase,
     renderer,
     theme::Palette,
 };
@@ -29,8 +24,6 @@ const PAD: i32 = 18;
 const MIN_W: i32 = 96;
 const MIN_H: i32 = 72;
 const WINDOW_GAP: i32 = 10;
-
-static HOOK: AtomicIsize = AtomicIsize::new(0);
 
 thread_local! {
     static STATE: RefCell<PreviewState> = RefCell::new(PreviewState::default());
@@ -69,32 +62,6 @@ struct PreviewLayout {
     font_px: i32,
 }
 
-pub unsafe fn install_thread_hook() -> bool {
-    if HOOK.load(Ordering::SeqCst) != 0 {
-        return true;
-    }
-
-    let hook = SetWindowsHookExW(
-        WH_CALLWNDPROCRET,
-        Some(callwndret_hook),
-        null_mut(),
-        GetCurrentThreadId(),
-    );
-    if hook.is_null() {
-        return false;
-    }
-
-    HOOK.store(hook as isize, Ordering::SeqCst);
-    true
-}
-
-pub unsafe fn uninstall_thread_hook() {
-    let raw = HOOK.swap(0, Ordering::SeqCst);
-    if raw != 0 {
-        UnhookWindowsHookEx(raw as HHOOK);
-    }
-}
-
 pub unsafe fn shutdown() {
     let hwnd = STATE.with(|cell| cell.borrow().hwnd);
     if !hwnd.is_null() && IsWindow(hwnd) != 0 {
@@ -116,67 +83,9 @@ pub unsafe fn invalidate() {
     }
 }
 
-unsafe fn is_visible() -> bool {
+pub unsafe fn is_visible() -> bool {
     let hwnd = STATE.with(|cell| cell.borrow().hwnd);
     !hwnd.is_null() && IsWindow(hwnd) != 0 && IsWindowVisible(hwnd) != 0
-}
-
-unsafe extern "system" fn callwndret_hook(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    if code >= 0 && lparam != 0 {
-        let call = &*(lparam as *const CWPRETSTRUCT);
-        if app::preview_is_picker_hwnd(call.hwnd) {
-            handle_picker_message(call);
-        }
-    }
-
-    CallNextHookEx(null_mut(), code, wparam, lparam)
-}
-
-unsafe fn handle_picker_message(call: &CWPRETSTRUCT) {
-    let picker = call.hwnd;
-
-    if call.message == WM_DESTROY {
-        shutdown();
-        return;
-    }
-
-    // The hook runs after the picker wndproc, so this also catches Escape,
-    // outside-click deactivation and hotkey toggles after the picker has hidden.
-    if IsWindowVisible(picker) == 0 {
-        hide();
-        return;
-    }
-
-    match call.message {
-        WM_RBUTTONUP => {
-            let (x, y) = point_from_lparam(call.lParam);
-            if let Some((kind, title, content)) = app::preview_select_at_client(x, y) {
-                InvalidateRect(picker, null(), 0);
-                open(picker, kind, &title, &content);
-            } else {
-                hide();
-            }
-        }
-        WM_MOUSEMOVE => {
-            if is_visible() {
-                if let Some((kind, title, content)) = app::preview_hover_payload() {
-                    update(picker, kind, &title, &content);
-                }
-            }
-        }
-        WM_KEYDOWN | WM_CHAR | WM_LBUTTONUP | WM_MOUSEWHEEL => {
-            if is_visible() {
-                if let Some((kind, title, content)) = app::preview_selected_payload() {
-                    update(picker, kind, &title, &content);
-                }
-            }
-        }
-        _ => {}
-    }
 }
 
 unsafe fn ensure_window(owner: HWND) -> HWND {
@@ -222,7 +131,7 @@ unsafe fn ensure_window(owner: HWND) -> HWND {
     hwnd
 }
 
-unsafe fn open(owner: HWND, kind: ItemKind, title: &str, content: &str) {
+pub unsafe fn show(owner: HWND, kind: ItemKind, title: &str, content: &str) {
     let hwnd = ensure_window(owner);
     if hwnd.is_null() {
         return;
@@ -248,7 +157,7 @@ unsafe fn open(owner: HWND, kind: ItemKind, title: &str, content: &str) {
     InvalidateRect(hwnd, null(), 0);
 }
 
-unsafe fn update(owner: HWND, kind: ItemKind, title: &str, content: &str) {
+pub unsafe fn update(owner: HWND, kind: ItemKind, title: &str, content: &str) {
     let hwnd = STATE.with(|cell| cell.borrow().hwnd);
     if hwnd.is_null() || IsWindow(hwnd) == 0 || IsWindowVisible(hwnd) == 0 {
         return;
