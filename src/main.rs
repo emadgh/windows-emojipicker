@@ -27,17 +27,10 @@ mod update;
 
 #[cfg(target_os = "windows")]
 fn main() {
-    unsafe {
-        // The preview integration observes picker messages after the main wndproc
-        // has updated selection/hover state. It never activates its own window.
-        preview::install_thread_hook();
-    }
-
     let result = app::run();
 
     unsafe {
         preview::shutdown();
-        preview::uninstall_thread_hook();
     }
 
     if let Err(error) = result {
