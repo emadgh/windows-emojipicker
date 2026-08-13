@@ -1,3 +1,5 @@
+const CMD_AUTOSTART: usize = 1008;
+
 unsafe fn fill(hdc: HDC, rect: &RECT, color: COLORREF) {
     let brush = CreateSolidBrush(color);
     if !brush.is_null() {
@@ -93,11 +95,13 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     let about_text = wide("About");
     let update_text = wide("Check for updates");
     let auto_update_text = wide("Automatic updates");
+    let autostart_text = wide("Start with Windows");
     let theme_text = wide(match current_settings.theme {
         settings::Theme::Dark => "Light theme",
         settings::Theme::Light => "Dark theme",
     });
     let exit = wide("Exit");
+
     AppendMenuW(menu, MF_STRING, CMD_OPEN, open.as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_MANAGE, manage.as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
@@ -108,6 +112,12 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         CMD_AUTO_UPDATE,
         auto_update_text.as_ptr(),
     );
+    AppendMenuW(
+        menu,
+        MF_STRING | if current_settings.autostart { MF_CHECKED } else { MF_UNCHECKED },
+        CMD_AUTOSTART,
+        autostart_text.as_ptr(),
+    );
     AppendMenuW(menu, MF_STRING, CMD_THEME, theme_text.as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_ABOUT, about_text.as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
@@ -116,8 +126,34 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     let mut point: POINT = zeroed();
     GetCursorPos(&mut point);
     SetForegroundWindow(hwnd);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, null());
+
+    // Use TPM_RETURNCMD so the autostart command can be handled here without
+    // adding application-specific state to the main picker wndproc. Existing
+    // commands are posted back through WM_COMMAND and retain their old path.
+    let command = TrackPopupMenu(
+        menu,
+        TPM_RIGHTBUTTON | TPM_RETURNCMD,
+        point.x,
+        point.y,
+        0,
+        hwnd,
+        null(),
+    ) as usize;
     DestroyMenu(menu);
+
+    if command == CMD_AUTOSTART {
+        let enabled = !settings::get().autostart;
+        if !settings::set_autostart(enabled) {
+            let text = wide("Could not update the Windows startup setting.");
+            let title = wide("Windows Emoji Picker");
+            MessageBoxW(hwnd, text.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR);
+        }
+        return;
+    }
+
+    if command != 0 {
+        PostMessageW(hwnd, WM_COMMAND, command, 0);
+    }
 }
 
 fn copy_wide_fixed<const N: usize>(text: &str, output: &mut [u16; N]) {
